@@ -1,0 +1,42 @@
+from sqlmodel import SQLModel, Field, Relationship
+from typing import Optional, List, TYPE_CHECKING
+from datetime import datetime
+from enum import Enum
+
+if TYPE_CHECKING:
+    from app.models.device import Device
+
+
+class SensorType(str, Enum):
+    TEMPERATURE = "temperature"
+    SMOKE = "smoke"
+    FLAME = "flame"
+    GAS = "gas"
+    HUMIDITY = "humidity"
+
+
+class Sensor(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    sensor_type: SensorType
+    device_id: int = Field(foreign_key="device.id")
+    threshold: Optional[float] = None
+    unit: Optional[str] = None
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Relationships
+    device: "Device" = Relationship(back_populates="sensors")
+    readings: List["SensorReading"] = Relationship(back_populates="sensor")
+
+
+class SensorReading(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sensor_id: int = Field(foreign_key="sensor.id")
+    value: float
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Relationships
+    sensor: "Sensor" = Relationship(back_populates="readings")
+
