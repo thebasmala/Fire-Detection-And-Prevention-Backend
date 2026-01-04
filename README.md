@@ -4,14 +4,14 @@ A FastAPI-based backend system for fire detection and prevention with MQTT integ
 
 ## Features
 
-- 🔥 Real-time fire detection and monitoring
-- 📡 MQTT integration for hardware devices (sensors, camera, arm)
-- 🤖 AI model integration for risk detection and fire location
-- 📹 Live video streaming support
-- 🔔 Real-time notifications
-- 🔐 JWT-based authentication
-- 📊 RESTful API for management website
-- 🗄️ PostgreSQL database with SQLModel ORM
+-  Real-time fire detection and monitoring
+-  MQTT integration for hardware devices (sensors, camera, arm)
+-  AI model integration for risk detection and fire location
+-  Live video streaming support
+-  Real-time notifications
+-  JWT-based authentication
+-  RESTful API for management website
+-  PostgreSQL database with SQLModel ORM
 
 ## Hardware Components
 
