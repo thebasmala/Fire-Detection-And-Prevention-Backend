@@ -69,10 +69,14 @@ class SerialClient:
         """Deactivate the fire suppression arm"""
         return self.send_command("DEACTIVATE")
     
-    def move_arm(self, angle: float, x: float, y: float) -> bool:
-        """Move arm to specific position"""
-        command = f"MOVE {angle} {x} {y}"
+    def move_arm(self, pan: float, tilt: float) -> bool:
+        """Move arm to specific position using pan and tilt angles"""
+        command = f"MOVE {pan} {tilt}"
         return self.send_command(command)
+    
+    def move_arm_legacy(self, angle: float, x: float, y: float) -> bool:
+        """Legacy method for backward compatibility (x=pan, y=tilt)"""
+        return self.move_arm(pan=x, tilt=y)
 
 
 # Global serial client instance

@@ -4,14 +4,14 @@ A FastAPI-based backend system for fire detection and prevention with MQTT integ
 
 ## Features
 
--  Real-time fire detection and monitoring
--  MQTT integration for hardware devices (sensors, camera, arm)
--  AI model integration for risk detection and fire location
--  Live video streaming support
--  Real-time notifications
--  JWT-based authentication
--  RESTful API for management website
--  PostgreSQL database with SQLModel ORM
+- Real-time fire detection and monitoring
+- MQTT integration for hardware devices (sensors, camera, arm)
+- AI model integration for risk detection and fire location
+- Live video streaming support
+- Real-time notifications
+- JWT-based authentication
+- RESTful API for management website
+- PostgreSQL database with SQLModel ORM
 
 ## Hardware Components
 
@@ -33,22 +33,14 @@ A FastAPI-based backend system for fire detection and prevention with MQTT integ
    ```
 
 2. **Configure environment**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
+   Create a `.env` file in the project root (see `guides/SETUP.md` for all available options)
 
 3. **Set up PostgreSQL database**:
    ```bash
    createdb fire_detection_db
    ```
 
-4. **Run migrations** (if using Alembic):
-   ```bash
-   alembic upgrade head
-   ```
-
-5. **Start the server**:
+4. **Start the server**:
    ```bash
    uvicorn app.main:app --reload
    ```
@@ -77,11 +69,11 @@ Once the server is running, access:
 │   │   └── serial_client.py # Serial communication
 │   └── services/            # Business logic
 ├── requirements.txt
-├── .env.example
+├── .env (create this file - see guides/SETUP.md)
 └── README.md
 ```
 
 ## Environment Variables
 
-See `.env.example` for all available configuration options.
+See `guides/SETUP.md` for all available configuration options and how to set up your `.env` file.
 

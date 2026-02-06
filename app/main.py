@@ -149,20 +149,38 @@ def handle_camera_message(topic: str, payload: dict):
                 
                 if result and result.get("confidence", 0) > 0.7:  # Fire detected with high confidence
                     with Session(engine) as session:
+                        # Get pan/tilt from AI model (or fallback to x/y for backward compatibility)
+                        pan = result.get("pan") or result.get("x")
+                        tilt = result.get("tilt") or result.get("y")
+                        
                         # Create fire event
+                        # Note: x_coordinate stores pan, y_coordinate stores tilt
                         fire_event = FireEvent(
                             status=FireEventStatus.DETECTED,
                             device_id=device_id,
                             camera_id=device_id,
-                            angle=result.get("angle"),
-                            x_coordinate=result.get("x"),
-                            y_coordinate=result.get("y"),
+                            angle=result.get("angle") or pan,  # Use pan as angle if angle not provided
+                            x_coordinate=pan,  # Pan angle
+                            y_coordinate=tilt,  # Tilt angle
                             confidence=result.get("confidence"),
                             detected_at=datetime.utcnow()
                         )
                         session.add(fire_event)
                         session.commit()
                         session.refresh(fire_event)
+                        
+                        # Automatically move arm and activate if pan/tilt available
+                        if pan is not None and tilt is not None:
+                            from app.core.serial_client import serial_client
+                            import time
+                            serial_client.move_arm(pan=pan, tilt=tilt)
+                            time.sleep(1)  # Wait for arm to move
+                            serial_client.activate_arm()
+                            fire_event.status = FireEventStatus.SUPPRESSING
+                            fire_event.suppressed_at = datetime.utcnow()
+                            session.add(fire_event)
+                            session.commit()
+                            logger.info(f"Arm activated automatically for fire event {fire_event.id}")
                         
                         # Send notification via MQTT
                         notification = {
@@ -176,7 +194,7 @@ def handle_camera_message(topic: str, payload: dict):
                         }
                         mqtt_client.publish("notifications/alerts", notification)
                         
-                        logger.info(f"Fire detected! Event ID: {fire_event.id}")
+                        logger.info(f"Fire detected! Event ID: {fire_event.id}, Pan: {pan}, Tilt: {tilt}")
             
             # Schedule async task
             try:

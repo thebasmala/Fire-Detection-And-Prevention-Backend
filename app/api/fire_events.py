@@ -91,8 +91,9 @@ async def update_fire_event(
     
     # If status changed to suppressed, update suppressed_at and activate arm
     if event_data.status == FireEventStatus.SUPPRESSING:
-        if event.angle and event.x_coordinate and event.y_coordinate:
-            serial_client.move_arm(event.angle, event.x_coordinate, event.y_coordinate)
+        # x_coordinate = pan, y_coordinate = tilt
+        if event.x_coordinate is not None and event.y_coordinate is not None:
+            serial_client.move_arm(pan=event.x_coordinate, tilt=event.y_coordinate)
         serial_client.activate_arm()
         event.suppressed_at = datetime.utcnow()
     
@@ -118,9 +119,12 @@ async def locate_fire(
     result = await ai_service.locate_fire(image_data)
     
     if result:
-        event.angle = result.get("angle")
-        event.x_coordinate = result.get("x")
-        event.y_coordinate = result.get("y")
+        # Get pan/tilt from AI model (or fallback to x/y for backward compatibility)
+        pan = result.get("pan") or result.get("x")
+        tilt = result.get("tilt") or result.get("y")
+        event.angle = result.get("angle") or pan
+        event.x_coordinate = pan  # Pan angle
+        event.y_coordinate = tilt  # Tilt angle
         event.confidence = result.get("confidence")
         event.updated_at = datetime.utcnow()
         session.add(event)
@@ -141,9 +145,10 @@ async def suppress_fire(
     if not event:
         raise HTTPException(status_code=404, detail="Fire event not found")
     
-    if event.angle and event.x_coordinate and event.y_coordinate:
-        # Move arm to fire location
-        serial_client.move_arm(event.angle, event.x_coordinate, event.y_coordinate)
+    # x_coordinate = pan, y_coordinate = tilt
+    if event.x_coordinate is not None and event.y_coordinate is not None:
+        # Move arm to fire location using pan/tilt
+        serial_client.move_arm(pan=event.x_coordinate, tilt=event.y_coordinate)
     
     # Activate arm
     success = serial_client.activate_arm()

@@ -54,7 +54,8 @@ class AIService:
                 response.raise_for_status()
                 result = response.json()
                 
-                # Expected response format: {"angle": float, "x": float, "y": float, "confidence": float}
+                # Expected response format: {"pan": float, "tilt": float, "confidence": float}
+                # Or backward compatible: {"angle": float, "x": float, "y": float, "confidence": float}
                 return result
         except httpx.HTTPError as e:
             logger.error(f"Error calling fire location AI model: {e}")

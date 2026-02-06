@@ -1,0 +1,25 @@
+# Raspberry Pi Requirements
+# Install with: pip install -r requirements.txt
+
+# MQTT
+paho-mqtt==1.6.1
+
+# GPIO (for sensors)
+RPi.GPIO==0.7.1
+gpiozero==1.6.2
+
+# Camera
+picamera2==0.3.12
+Pillow==10.1.0
+
+# Image Processing (for AI and video streaming)
+opencv-python==4.8.1.78
+numpy==1.24.3
+
+# Video Streaming Server
+Flask==3.0.0
+
+# AI/ML (optional)
+# tensorflow==2.13.0  # For Raspberry Pi, use TensorFlow Lite
+# torch==2.0.1  # PyTorch (heavier, may not work on Pi)
+
