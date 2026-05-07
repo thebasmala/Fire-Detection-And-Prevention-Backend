@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     mqtt_topic_sensors: str = "sensors/#"
     mqtt_topic_camera: str = "camera/#"
     mqtt_topic_arm: str = "arm/#"
+    fire_event_min_confidence: float = 0.6
     
     # Serial (for arm control)
     serial_port: str = "COM3"
@@ -32,11 +33,22 @@ class Settings(BaseSettings):
     # Video Streaming
     video_stream_port: int = 8080
     video_upload_dir: str = "./uploads/videos"
+    fire_frames_upload_dir: str = "./uploads/fire_frames"
+    # If set, Pi can upload frames with header X-Fire-Frame-Key: <value> (no JWT).
+    fire_frame_upload_api_key: Optional[str] = None
+    # Full public base URL for links returned to Pi (e.g. http://192.168.100.4:8000). If unset, request URL is used.
+    public_api_base_url: Optional[str] = None
+    
+    # Data retention
+    sensor_data_retention_days: int = 30
     
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = True
+    # Comma-separated allowed browser origins for production CORS
+    # Example: "https://app.example.com,https://admin.example.com"
+    cors_origins: Optional[str] = None
     
     class Config:
         env_file = ".env"

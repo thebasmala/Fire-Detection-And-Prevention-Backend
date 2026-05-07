@@ -1,19 +1,23 @@
 import logging
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session, select
-from datetime import datetime
+from fastapi.staticfiles import StaticFiles
+from sqlmodel import Session, select, delete
 
 from app.config import settings
 from app.database import init_db, get_session
 from app.core.mqtt_client import mqtt_client
-from app.core.serial_client import serial_client
 from app.api import auth, devices, sensors, alerts, fire_events, video, ai
 from app.models.device import Device, DeviceStatus
-from app.models.sensor import Sensor, SensorReading
+from app.models.sensor import Sensor, SensorReading, SensorStatus
 from app.models.fire_event import FireEvent, FireEventStatus
-from app.models.alert import AlertType
+from app.models.alert import Alert, AlertType
 from app.services.notification_service import notification_service
 from app.services.ai_service import ai_service
 
@@ -34,6 +38,7 @@ async def lifespan(app: FastAPI):
     # Initialize database
     init_db()
     logger.info("Database initialized")
+    os.makedirs(settings.fire_frames_upload_dir, exist_ok=True)
     
     # Connect MQTT client
     try:
@@ -42,24 +47,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to connect MQTT client: {e}")
     
-    # Connect serial client (for arm control)
-    try:
-        serial_client.connect()
-        logger.info("Serial client connected")
-    except Exception as e:
-        logger.warning(f"Failed to connect serial client (arm may not be available): {e}")
-    
     # Register MQTT message handlers
     mqtt_client.register_handler("sensors/#", handle_sensor_message)
     mqtt_client.register_handler("camera/#", handle_camera_message)
     mqtt_client.register_handler("arm/#", handle_arm_message)
+
+    # Start background task for sensor data retention
+    retention_task = asyncio.create_task(cleanup_old_sensor_readings_task())
     
     yield
     
     # Shutdown
     logger.info("Shutting down...")
+    retention_task.cancel()
     mqtt_client.disconnect()
-    serial_client.disconnect()
     logger.info("Shutdown complete")
 
 
@@ -75,7 +76,7 @@ def handle_sensor_message(topic: str, payload: dict):
             device_id = payload.get("device_id")
             
             if sensor_id and value is not None:
-                # Create sensor reading
+                # Create sensor reading (for history/audit)
                 reading = SensorReading(
                     sensor_id=sensor_id,
                     value=value,
@@ -83,30 +84,46 @@ def handle_sensor_message(topic: str, payload: dict):
                 )
                 session.add(reading)
                 
-                # Get sensor to check threshold
-                from app.models.sensor import Sensor
+                # Get sensor to update live status and check threshold
                 sensor = session.get(Sensor, sensor_id)
-                if sensor and sensor.threshold and value >= sensor.threshold:
+                if sensor:
+                    sensor.last_value = value
+                    sensor.last_timestamp = datetime.utcnow()
+                    
+                    # Derive sensor status based on threshold if available
+                    if sensor.threshold is not None:
+                        if value >= sensor.threshold:
+                            sensor.status = SensorStatus.CRITICAL
+                        elif value >= 0.8 * sensor.threshold:
+                            sensor.status = SensorStatus.WARNING
+                        else:
+                            sensor.status = SensorStatus.NORMAL
+                    else:
+                        sensor.status = SensorStatus.NORMAL
+                    
                     # Threshold exceeded, create alert synchronously
-                    alert = Alert(
-                        alert_type=AlertType.HIGH_TEMPERATURE if sensor.sensor_type == "temperature" else AlertType.SMOKE_DETECTED,
-                        title=f"High {sensor.sensor_type} detected",
-                        message=f"Sensor {sensor.name} reading {value} exceeds threshold {sensor.threshold}",
-                        severity=3,
-                        sensor_id=sensor_id,
-                        device_id=device_id
-                    )
-                    session.add(alert)
-                    # Send MQTT notification
-                    notification = {
-                        "alert_id": alert.id,
-                        "type": alert.alert_type,
-                        "title": alert.title,
-                        "message": alert.message,
-                        "severity": alert.severity,
-                        "timestamp": alert.created_at.isoformat()
-                    }
-                    mqtt_client.publish("notifications/alerts", notification)
+                    if sensor.threshold is not None and value >= sensor.threshold:
+                        alert = Alert(
+                            alert_type=AlertType.HIGH_TEMPERATURE if sensor.sensor_type == "temperature" else AlertType.SMOKE_DETECTED,
+                            title=f"High {sensor.sensor_type} detected",
+                            message=f"Sensor {sensor.name} reading {value} exceeds threshold {sensor.threshold}",
+                            severity=3,
+                            sensor_id=sensor_id,
+                            device_id=device_id
+                        )
+                        session.add(alert)
+                        # Send MQTT notification
+                        notification = {
+                            "alert_id": alert.id,
+                            "type": alert.alert_type,
+                            "title": alert.title,
+                            "message": alert.message,
+                            "severity": alert.severity,
+                            "timestamp": alert.created_at.isoformat()
+                        }
+                        mqtt_client.publish("notifications/alerts", notification)
+                    
+                    session.add(sensor)
                 
                 # Update device last_seen
                 if device_id:
@@ -129,6 +146,157 @@ def handle_camera_message(topic: str, payload: dict):
         import base64
         import asyncio
         
+        # Production Pi integration payload (JSONL event forwarded through MQTT)
+        # Example:
+        # {
+        #   "alert_status": "FIRE_DETECTED",
+        #   "detection_type": "FIRE",
+        #   "confidence": 0.61,
+        #   "timestamp": 1775754185.28,
+        #   "pan": 0.24,
+        #   "tilt": -0.47,
+        #   "frame_path": ".../frame_857.jpg"
+        # }
+        alert_status = str(payload.get("alert_status", "")).strip().upper()
+        detection_type = str(payload.get("detection_type", "")).strip().upper()
+        confidence_raw = payload.get("confidence")
+        try:
+            confidence = float(confidence_raw) if confidence_raw is not None else None
+        except (TypeError, ValueError):
+            confidence = None
+        logger.info(
+            "Camera MQTT message received: topic=%s alert_status=%s detection_type=%s confidence=%s",
+            topic,
+            alert_status,
+            detection_type,
+            confidence,
+        )
+        
+        if (
+            alert_status == "FIRE_DETECTED"
+            and detection_type == "FIRE"
+            and confidence is not None
+            and confidence >= settings.fire_event_min_confidence
+        ):
+            device_id = payload.get("device_id")
+            camera_id = payload.get("camera_id") or device_id
+
+            frame_reference = (
+                payload.get("frame_url")
+                or payload.get("frame_path")
+                or payload.get("fire_frame_path")
+                or payload.get("fire_frame")
+                or payload.get("image_path")
+            )
+
+            zone_raw = payload.get("zone")
+            try:
+                zone = int(zone_raw) if zone_raw is not None else None
+            except (TypeError, ValueError):
+                zone = None
+
+            # Expected from Pi payload: `dateandtime` (string ISO or unix seconds).
+            detected_at = datetime.utcnow()
+            dt_val = payload.get("dateandtime") or payload.get("datetime") or payload.get("detected_at") or payload.get("timestamp")
+            if isinstance(dt_val, (int, float)):
+                try:
+                    detected_at = datetime.utcfromtimestamp(float(dt_val))
+                except (TypeError, ValueError, OSError):
+                    detected_at = datetime.utcnow()
+            elif isinstance(dt_val, str) and dt_val.strip():
+                try:
+                    detected_at = datetime.fromisoformat(dt_val.strip())
+                except ValueError:
+                    detected_at = datetime.utcnow()
+            
+            with Session(engine) as session:
+                fire_event = FireEvent(
+                    status=FireEventStatus.DETECTED,
+                    device_id=device_id,
+                    camera_id=camera_id,
+                    zone=zone,
+                    confidence=confidence if confidence is not None else 0.0,
+                    video_url=frame_reference,
+                    detected_at=detected_at,
+                )
+                session.add(fire_event)
+                session.commit()
+                session.refresh(fire_event)
+                fire_alert = Alert(
+                    alert_type=AlertType.FIRE_DETECTED,
+                    title="Fire Detected",
+                    message=(
+                        f"confidence={fire_event.confidence:.3f}, "
+                        f"zone={fire_event.zone}, "
+                        f"detected_at={fire_event.detected_at.isoformat()}, "
+                        f"fire_frame={frame_reference}"
+                    ),
+                    severity=5,
+                    device_id=device_id,
+                    fire_event_id=fire_event.id,
+                )
+                session.add(fire_alert)
+                session.commit()
+                logger.info(
+                    "Fire event created from integration payload: id=%s confidence=%.3f frame=%s",
+                    fire_event.id,
+                    fire_event.confidence,
+                    frame_reference,
+                )
+            return
+        
+        if (
+            alert_status == "DEVICE_DETECTED"
+            and confidence is not None
+            and confidence >= settings.fire_event_min_confidence
+        ):
+            device_name = str(payload.get("detection_type", "unknown")).strip()
+            frame_id = payload.get("frame")
+            device_id = payload.get("device_id")
+            with Session(engine) as session:
+                device_alert = Alert(
+                    # Reusing SYSTEM_ERROR enum slot for device-detection alerts in current schema.
+                    alert_type=AlertType.SYSTEM_ERROR,
+                    title="Device Detected",
+                    message=(
+                        f"device={device_name}, confidence={confidence:.3f}, "
+                        f"frame={frame_id}, detected_at={datetime.utcnow().isoformat()}"
+                    ),
+                    severity=2,
+                    device_id=device_id,
+                )
+                session.add(device_alert)
+                session.commit()
+            mqtt_client.publish(
+                "notifications/alerts",
+                {
+                    "type": "device_detected",
+                    "title": "Device Detected",
+                    "message": f"{device_name} detected",
+                    "severity": 2,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "confidence": confidence,
+                    "frame": frame_id,
+                    "device_id": device_id,
+                },
+            )
+            logger.info(
+                "Device event accepted from integration payload: type=%s confidence=%.3f frame=%s",
+                device_name,
+                confidence,
+                frame_id,
+            )
+            return
+        
+        if alert_status in {"FIRE_DETECTED", "DEVICE_DETECTED"}:
+            logger.info(
+                "Camera MQTT message ignored by filters: alert_status=%s detection_type=%s confidence=%s threshold=%s",
+                alert_status,
+                detection_type,
+                confidence,
+                settings.fire_event_min_confidence,
+            )
+        
         # Parse camera data from MQTT payload
         # Expected format: {"device_id": int, "image_data": str (base64), "metadata": dict}
         device_id = payload.get("device_id")
@@ -149,19 +317,11 @@ def handle_camera_message(topic: str, payload: dict):
                 
                 if result and result.get("confidence", 0) > 0.7:  # Fire detected with high confidence
                     with Session(engine) as session:
-                        # Get pan/tilt from AI model (or fallback to x/y for backward compatibility)
-                        pan = result.get("pan") or result.get("x")
-                        tilt = result.get("tilt") or result.get("y")
-                        
-                        # Create fire event
-                        # Note: x_coordinate stores pan, y_coordinate stores tilt
+                        # Create fire event (spatial columns removed from FireEvent schema)
                         fire_event = FireEvent(
                             status=FireEventStatus.DETECTED,
                             device_id=device_id,
                             camera_id=device_id,
-                            angle=result.get("angle") or pan,  # Use pan as angle if angle not provided
-                            x_coordinate=pan,  # Pan angle
-                            y_coordinate=tilt,  # Tilt angle
                             confidence=result.get("confidence"),
                             detected_at=datetime.utcnow()
                         )
@@ -169,7 +329,9 @@ def handle_camera_message(topic: str, payload: dict):
                         session.commit()
                         session.refresh(fire_event)
                         
-                        # Automatically move arm and activate if pan/tilt available
+                        # Automatically move arm and activate if pan/tilt available in AI result
+                        pan = result.get("pan") or result.get("x")
+                        tilt = result.get("tilt") or result.get("y")
                         if pan is not None and tilt is not None:
                             from app.core.serial_client import serial_client
                             import time
@@ -232,6 +394,27 @@ def handle_arm_message(topic: str, payload: dict):
         logger.error(f"Error handling arm message: {e}")
 
 
+async def cleanup_old_sensor_readings_task():
+    """Periodically delete old sensor readings based on retention setting."""
+    from app.database import engine
+    try:
+        while True:
+            try:
+                with Session(engine) as session:
+                    cutoff = datetime.utcnow() - timedelta(days=settings.sensor_data_retention_days)
+                    session.exec(
+                        delete(SensorReading).where(SensorReading.timestamp < cutoff)
+                    )
+                    session.commit()
+                    logger.info("Old sensor readings cleanup completed")
+            except Exception as cleanup_error:
+                logger.error(f"Error during sensor readings cleanup: {cleanup_error}")
+            # Run once per day
+            await asyncio.sleep(24 * 60 * 60)
+    except asyncio.CancelledError:
+        logger.info("Sensor readings cleanup task cancelled")
+
+
 # Create FastAPI application
 app = FastAPI(
     title="Fire Detection and Prevention API",
@@ -241,12 +424,18 @@ app = FastAPI(
 )
 
 # CORS middleware
-# In production, replace ["*"] with your frontend domain(s)
-# Example: allow_origins=["https://your-frontend.com", "https://www.your-frontend.com"]
-cors_origins = ["*"] if settings.debug else [
-    "https://your-frontend-domain.com",  # Update with your frontend URL
-    "http://localhost:3000",  # For local development
-]
+if settings.debug:
+    cors_origins = ["*"]
+else:
+    cors_origins = [
+        origin.strip()
+        for origin in (settings.cors_origins or "").split(",")
+        if origin.strip()
+    ]
+    if not cors_origins:
+        logger.warning(
+            "Production mode with empty CORS_ORIGINS: browser clients may be blocked by CORS."
+        )
 
 app.add_middleware(
     CORSMiddleware,
@@ -254,6 +443,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+os.makedirs(settings.fire_frames_upload_dir, exist_ok=True)
+app.mount(
+    "/static/fire_frames",
+    StaticFiles(directory=settings.fire_frames_upload_dir),
+    name="fire_frames_static",
 )
 
 # Include routers
@@ -281,8 +477,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "mqtt_connected": mqtt_client.is_connected,
-        "serial_connected": serial_client.is_connected
+        "mqtt_connected": mqtt_client.is_connected
     }
 
 

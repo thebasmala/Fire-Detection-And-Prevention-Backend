@@ -1,0 +1,15 @@
+[Unit]
+Description=Fire System Pi MJPEG Stream
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/smart_fire_system/integration/smart_fire_system
+ExecStart=/usr/bin/python3 /home/pi/smart_fire_system/integration/smart_fire_system/video_stream_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

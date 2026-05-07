@@ -15,6 +15,12 @@ class SensorType(str, Enum):
     HUMIDITY = "humidity"
 
 
+class SensorStatus(str, Enum):
+    NORMAL = "normal"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
 class Sensor(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
@@ -23,6 +29,10 @@ class Sensor(SQLModel, table=True):
     threshold: Optional[float] = None
     unit: Optional[str] = None
     is_active: bool = Field(default=True)
+    # Live status fields for UI
+    last_value: Optional[float] = None
+    last_timestamp: Optional[datetime] = None
+    status: SensorStatus = Field(default=SensorStatus.NORMAL)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     

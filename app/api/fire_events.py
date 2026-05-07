@@ -8,7 +8,6 @@ from app.models.fire_event import FireEvent, FireEventStatus
 from app.schemas.fire_event import FireEventCreate, FireEventRead, FireEventUpdate
 from app.services.notification_service import notification_service
 from app.services.ai_service import ai_service
-from app.core.serial_client import serial_client
 from datetime import datetime
 
 router = APIRouter(prefix="/fire-events", tags=["Fire Events"])
@@ -61,7 +60,7 @@ async def create_fire_event(
     await notification_service.notify_fire_detected(
         session=session,
         fire_event_id=event.id,
-        location=event.location
+        location=None,
     )
     
     return event
@@ -83,18 +82,12 @@ async def update_fire_event(
     for field, value in update_data.items():
         setattr(event, field, value)
     
-    event.updated_at = datetime.utcnow()
-    
     # If status changed to confirmed, update confirmed_at
     if event_data.status == FireEventStatus.CONFIRMED and not event.confirmed_at:
         event.confirmed_at = datetime.utcnow()
     
-    # If status changed to suppressed, update suppressed_at and activate arm
+    # If status changed to suppressed, update suppressed_at
     if event_data.status == FireEventStatus.SUPPRESSING:
-        # x_coordinate = pan, y_coordinate = tilt
-        if event.x_coordinate is not None and event.y_coordinate is not None:
-            serial_client.move_arm(pan=event.x_coordinate, tilt=event.y_coordinate)
-        serial_client.activate_arm()
         event.suppressed_at = datetime.utcnow()
     
     session.add(event)
@@ -119,14 +112,8 @@ async def locate_fire(
     result = await ai_service.locate_fire(image_data)
     
     if result:
-        # Get pan/tilt from AI model (or fallback to x/y for backward compatibility)
-        pan = result.get("pan") or result.get("x")
-        tilt = result.get("tilt") or result.get("y")
-        event.angle = result.get("angle") or pan
-        event.x_coordinate = pan  # Pan angle
-        event.y_coordinate = tilt  # Tilt angle
+        # Keep only confidence update; spatial fields were removed from FireEvent.
         event.confidence = result.get("confidence")
-        event.updated_at = datetime.utcnow()
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -140,26 +127,16 @@ async def suppress_fire(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Activate fire suppression arm for a fire event"""
+    """Mark fire event as being suppressed (no direct arm control here)"""
     event = session.get(FireEvent, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Fire event not found")
     
-    # x_coordinate = pan, y_coordinate = tilt
-    if event.x_coordinate is not None and event.y_coordinate is not None:
-        # Move arm to fire location using pan/tilt
-        serial_client.move_arm(pan=event.x_coordinate, tilt=event.y_coordinate)
-    
-    # Activate arm
-    success = serial_client.activate_arm()
-    
-    if success:
-        event.status = FireEventStatus.SUPPRESSING
-        event.suppressed_at = datetime.utcnow()
-        event.updated_at = datetime.utcnow()
-        session.add(event)
-        session.commit()
-        session.refresh(event)
-    
+    event.status = FireEventStatus.SUPPRESSING
+    event.suppressed_at = datetime.utcnow()
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
     return event
 

@@ -12,10 +12,11 @@ import sys
 from datetime import datetime
 
 # Configuration - UPDATE THESE VALUES
-MQTT_BROKER = "localhost"  # Change to your backend's IP or domain
+# Broker runs on Raspberry Pi in your setup.
+MQTT_BROKER = "raspberrypi.local"
 MQTT_PORT = 1883
 MQTT_TOPIC = "camera/entrance"
-DEVICE_ID = 2  # Match with your database device ID
+DEVICE_ID = 1  # Must match a row in your DB (devices table); change if yours differs
 
 # Try importing camera libraries
 try:

@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
-"""
-Raspberry Pi Video Stream Server
-Creates HTTP MJPEG stream that backend can access
-"""
+"""Raspberry Pi MJPEG stream server for backend proxy."""
 
 from flask import Flask, Response
 from picamera2 import Picamera2
 import cv2
-import threading
 import time
+import socket
 
 app = Flask(__name__)
 
 # Initialize camera
 try:
     picam2 = Picamera2()
-    # Configure camera
+    # Configure camera for lightweight LAN streaming
     config = picam2.create_video_configuration(
         main={"size": (640, 480)},
-        controls={"FrameRate": 30}
+        controls={"FrameRate": 20}
     )
     picam2.configure(config)
     picam2.start()
@@ -54,7 +51,7 @@ def generate_frames():
             # Convert RGB to BGR for OpenCV
             frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             
-            # Optional: Add timestamp or overlay
+            # Optional overlay for troubleshooting
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             cv2.putText(frame_bgr, timestamp, (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -92,13 +89,26 @@ def health():
         "camera_available": CAMERA_AVAILABLE
     }
 
+
+def _get_lan_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "unknown"
+
 if __name__ == '__main__':
+    lan_ip = _get_lan_ip()
     print("🎥 Starting video stream server...")
-    print("📹 Stream available at: http://0.0.0.0:5000/video_feed")
-    print("🔍 Health check: http://0.0.0.0:5000/health")
+    print("📹 Stream URL for backend: http://raspberrypi.local:5000/video_feed")
+    print(f"📹 Stream URL by IP:      http://{lan_ip}:5000/video_feed")
+    print("🔍 Health check:          http://raspberrypi.local:5000/health")
     print("Press Ctrl+C to stop\n")
     
-    # Run on all interfaces so backend can access it
+    # Run on all interfaces so backend on laptop can access it
     app.run(host='0.0.0.0', port=5000, threaded=True, debug=False)
 
 

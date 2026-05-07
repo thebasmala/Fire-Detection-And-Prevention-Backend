@@ -2,14 +2,16 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, Header, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel import Session, select
 from app.config import settings
 from app.database import get_session
 from app.models.user import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
+# HTTPBearer: Swagger "Authorize" takes the JWT from POST /api/auth/login (OAuth2 Password flow alone does not).
+_bearer_scheme = HTTPBearer(auto_error=True)
+_fire_frame_bearer = HTTPBearer(auto_error=False)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -41,8 +43,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    session: Session = Depends(get_session)
+    auth: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    session: Session = Depends(get_session),
 ) -> User:
     """Get current authenticated user from JWT token"""
     credentials_exception = HTTPException(
@@ -50,6 +52,7 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = auth.credentials
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         username: str = payload.get("sub")
@@ -74,4 +77,30 @@ async def get_current_active_user(
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
+
+
+async def require_fire_frame_upload_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_fire_frame_bearer),
+    x_fire_frame_key: Optional[str] = Header(None, alias="X-Fire-Frame-Key"),
+    session: Session = Depends(get_session),
+) -> None:
+    """Pi uploads: set FIRE_FRAME_UPLOAD_API_KEY in .env and send X-Fire-Frame-Key, or use Bearer JWT."""
+    if settings.fire_frame_upload_api_key and x_fire_frame_key == settings.fire_frame_upload_api_key:
+        return
+    if credentials and credentials.scheme.lower() == "bearer":
+        try:
+            payload = jwt.decode(
+                credentials.credentials, settings.secret_key, algorithms=[settings.algorithm]
+            )
+            username: Optional[str] = payload.get("sub")
+            if username:
+                user = session.exec(select(User).where(User.username == username)).first()
+                if user is not None and user.is_active:
+                    return
+        except JWTError:
+            pass
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing authentication for frame upload",
+    )
 

@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-from app.models.sensor import SensorType
+from app.models.sensor import SensorType, SensorStatus
 
 
 class SensorBase(BaseModel):
@@ -27,6 +27,9 @@ class SensorUpdate(BaseModel):
 class SensorRead(SensorBase):
     id: int
     device_id: int
+    last_value: Optional[float] = None
+    last_timestamp: Optional[datetime] = None
+    status: SensorStatus = SensorStatus.NORMAL
     created_at: datetime
     updated_at: datetime
     

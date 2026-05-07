@@ -15,10 +15,8 @@ class FireEventStatus(str, Enum):
 class FireEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     status: FireEventStatus = Field(default=FireEventStatus.DETECTED)
-    location: Optional[str] = None
-    angle: Optional[float] = None  # Fire angle in degrees
-    x_coordinate: Optional[float] = None
-    y_coordinate: Optional[float] = None
+    # Turret zone (1-4). Kept optional because older payloads may not include it yet.
+    zone: Optional[int] = None
     confidence: Optional[float] = None  # AI model confidence (0-1)
     temperature: Optional[float] = None
     device_id: Optional[int] = None
@@ -28,5 +26,4 @@ class FireEvent(SQLModel, table=True):
     confirmed_at: Optional[datetime] = None
     suppressed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
