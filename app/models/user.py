@@ -1,9 +1,6 @@
-from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional, List, TYPE_CHECKING
+from sqlmodel import SQLModel, Field
+from typing import Optional
 from datetime import datetime
-
-if TYPE_CHECKING:
-    from app.models.alert import Alert
 
 
 class User(SQLModel, table=True):
@@ -16,7 +13,4 @@ class User(SQLModel, table=True):
     is_superuser: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    alerts: List["Alert"] = Relationship(back_populates="user")
 

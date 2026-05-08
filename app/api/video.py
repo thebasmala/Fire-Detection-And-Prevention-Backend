@@ -83,19 +83,46 @@ async def upload_fire_frame(
     _: None = Depends(require_fire_frame_upload_auth),
 ):
     """Store a fire snapshot JPEG/PNG on the backend and return a URL for MQTT / DB (video_url)."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
     suffix = Path(file.filename or "frame.jpg").suffix.lower()
     if suffix not in _ALLOWED_FRAME_EXT:
         suffix = ".jpg"
     safe_name = f"{uuid.uuid4().hex}{suffix}"
     dest = Path(settings.fire_frames_upload_dir) / safe_name
     dest.parent.mkdir(parents=True, exist_ok=True)
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty file")
     dest.write_bytes(data)
     base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
     public_url = f"{base}/static/fire_frames/{safe_name}"
     logger.info("Fire frame saved: %s", public_url)
+    return FireFrameUploadResponse(url=public_url, filename=safe_name)
+
+
+@router.post(
+    "/frames/upload",
+    response_model=FireFrameUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_general_frame(
+    request: Request,
+    file: UploadFile = File(...),
+    _: None = Depends(require_fire_frame_upload_auth),
+):
+    """Store general snapshot JPEG/PNG (e.g., risky device) and return public URL."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    suffix = Path(file.filename or "frame.jpg").suffix.lower()
+    if suffix not in _ALLOWED_FRAME_EXT:
+        suffix = ".jpg"
+    safe_name = f"{uuid.uuid4().hex}{suffix}"
+    dest = Path(settings.frames_upload_dir) / safe_name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
+    public_url = f"{base}/static/frames/{safe_name}"
+    logger.info("General frame saved: %s", public_url)
     return FireFrameUploadResponse(url=public_url, filename=safe_name)
 
 

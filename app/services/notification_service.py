@@ -1,9 +1,8 @@
 import logging
-from typing import List, Optional
+from typing import Optional
 from sqlmodel import Session, select
 from datetime import datetime
-from app.models.alert import Alert, AlertType, AlertStatus
-from app.models.user import User
+from app.models.alert import Alert, AlertType
 from app.core.mqtt_client import mqtt_client
 
 logger = logging.getLogger(__name__)
@@ -17,22 +16,16 @@ class NotificationService:
         self,
         session: Session,
         alert_type: AlertType,
-        title: str,
-        message: str,
-        severity: int = 1,
-        sensor_id: Optional[int] = None,
-        device_id: Optional[int] = None,
-        fire_event_id: Optional[int] = None
+        risky_device_id: Optional[int] = None,
+        fire_event_id: Optional[int] = None,
+        sensor_reading_id: Optional[int] = None,
     ) -> Alert:
-        """Create a new alert and notify users"""
+        """Create a new reference-based alert and notify users"""
         alert = Alert(
             alert_type=alert_type,
-            title=title,
-            message=message,
-            severity=severity,
-            sensor_id=sensor_id,
-            device_id=device_id,
-            fire_event_id=fire_event_id
+            risky_device_id=risky_device_id,
+            fire_event_id=fire_event_id,
+            sensor_reading_id=sensor_reading_id,
         )
         session.add(alert)
         session.commit()
@@ -41,7 +34,7 @@ class NotificationService:
         # Send notification via MQTT
         self._send_mqtt_notification(alert)
         
-        logger.info(f"Created alert: {alert.id} - {title}")
+        logger.info(f"Created alert: {alert.id} - {alert.alert_type}")
         return alert
     
     def _send_mqtt_notification(self, alert: Alert):
@@ -49,9 +42,9 @@ class NotificationService:
         notification = {
             "alert_id": alert.id,
             "type": alert.alert_type,
-            "title": alert.title,
-            "message": alert.message,
-            "severity": alert.severity,
+            "risky_device_id": alert.risky_device_id,
+            "fire_event_id": alert.fire_event_id,
+            "sensor_reading_id": alert.sensor_reading_id,
             "timestamp": alert.created_at.isoformat()
         }
         self.mqtt_client.publish("notifications/alerts", notification)
@@ -63,15 +56,9 @@ class NotificationService:
         location: Optional[str] = None
     ):
         """Create and send fire detection alert"""
-        title = "Fire Detected!"
-        message = f"Fire detected at {location}" if location else "Fire detected in the system"
-        
         await self.create_alert(
             session=session,
             alert_type=AlertType.FIRE_DETECTED,
-            title=title,
-            message=message,
-            severity=5,
             fire_event_id=fire_event_id
         )
     
@@ -81,14 +68,10 @@ class NotificationService:
         device_id: int,
         device_name: str
     ):
-        """Create and send device offline alert"""
+        """Create and send gas/system availability alert"""
         await self.create_alert(
             session=session,
-            alert_type=AlertType.DEVICE_OFFLINE,
-            title=f"Device Offline: {device_name}",
-            message=f"Device {device_name} is offline and not responding",
-            severity=2,
-            device_id=device_id
+            alert_type=AlertType.GAS_DETECTED
         )
     
     async def acknowledge_alert(
@@ -104,9 +87,8 @@ class NotificationService:
         if not alert:
             return None
         
-        alert.status = AlertStatus.ACKNOWLEDGED
-        alert.user_id = user_id
-        alert.acknowledged_at = datetime.utcnow()
+        # With slim alert model, acknowledge and resolve share resolved_at.
+        alert.resolved_at = datetime.utcnow()
         session.add(alert)
         session.commit()
         session.refresh(alert)
@@ -126,8 +108,6 @@ class NotificationService:
         if not alert:
             return None
         
-        alert.status = AlertStatus.RESOLVED
-        alert.user_id = user_id
         alert.resolved_at = datetime.utcnow()
         session.add(alert)
         session.commit()

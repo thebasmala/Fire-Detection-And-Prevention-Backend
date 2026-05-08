@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.core.security import get_current_active_user
 from app.models.user import User
-from app.models.fire_event import FireEvent, FireEventStatus
+from app.models.fire_event import FireEvent
 from app.schemas.fire_event import FireEventCreate, FireEventRead, FireEventUpdate
 from app.services.notification_service import notification_service
 from app.services.ai_service import ai_service
@@ -15,17 +15,13 @@ router = APIRouter(prefix="/fire-events", tags=["Fire Events"])
 
 @router.get("", response_model=List[FireEventRead])
 async def get_fire_events(
-    status_filter: Optional[FireEventStatus] = None,
     skip: int = 0,
     limit: int = 100,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get all fire events, optionally filtered by status"""
-    if status_filter:
-        statement = select(FireEvent).where(FireEvent.status == status_filter).offset(skip).limit(limit)
-    else:
-        statement = select(FireEvent).offset(skip).limit(limit)
+    """Get all fire events"""
+    statement = select(FireEvent).offset(skip).limit(limit)
     statement = statement.order_by(FireEvent.detected_at.desc())
     events = session.exec(statement).all()
     return events
@@ -51,7 +47,10 @@ async def create_fire_event(
     current_user: User = Depends(get_current_active_user)
 ):
     """Create a new fire event"""
-    event = FireEvent(**event_data.model_dump())
+    event_payload = event_data.model_dump(exclude_unset=True)
+    if event_payload.get("detected_at") is None:
+        event_payload["detected_at"] = datetime.utcnow()
+    event = FireEvent(**event_payload)
     session.add(event)
     session.commit()
     session.refresh(event)
@@ -81,15 +80,7 @@ async def update_fire_event(
     update_data = event_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(event, field, value)
-    
-    # If status changed to confirmed, update confirmed_at
-    if event_data.status == FireEventStatus.CONFIRMED and not event.confirmed_at:
-        event.confirmed_at = datetime.utcnow()
-    
-    # If status changed to suppressed, update suppressed_at
-    if event_data.status == FireEventStatus.SUPPRESSING:
-        event.suppressed_at = datetime.utcnow()
-    
+
     session.add(event)
     session.commit()
     session.refresh(event)
@@ -112,7 +103,6 @@ async def locate_fire(
     result = await ai_service.locate_fire(image_data)
     
     if result:
-        # Keep only confidence update; spatial fields were removed from FireEvent.
         event.confidence = result.get("confidence")
         session.add(event)
         session.commit()
@@ -127,13 +117,12 @@ async def suppress_fire(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Mark fire event as being suppressed (no direct arm control here)"""
+    """Mark fire event as resolved"""
     event = session.get(FireEvent, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Fire event not found")
     
-    event.status = FireEventStatus.SUPPRESSING
-    event.suppressed_at = datetime.utcnow()
+    event.resolved_at = datetime.utcnow()
     session.add(event)
     session.commit()
     session.refresh(event)

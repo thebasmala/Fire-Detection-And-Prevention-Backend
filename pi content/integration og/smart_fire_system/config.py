@@ -107,17 +107,6 @@ FIRE_PUMP_COOLDOWN_SEC = 2.5
 MAX_FRAME_SAVE_INTERVAL_S = 1.0
 
 FIRE_SMOKE_LABELS = {0: "FIRE", 1: "SMOKE"}
-APPLIANCE_MODEL_PATH = "/home/pi/smart_fire_system/models/appliance_detector/best.hef"
-APPLIANCE_LABELS = {
-    0: "cabinet heater",
-    1: "coffee maker",
-    2: "microwave",
-    3: "kettle",
-    4: "iron",
-    5: "lighter",
-    6: "cigarette",
-}
-APPLIANCE_MIN_CONFIDENCE = 0.60
 
 # ---------------------------------------------------------------------------
 # HSV + motion fire validation  (fire_validator.py)
@@ -235,7 +224,3 @@ FIRE_FRAME_UPLOAD_API_KEY = "f7k2m9x4p1q8w3n6j5r0t2y8u1v4z9s"
 # or after cooldown seconds.
 FIRE_EVENT_MIN_SEND_INTERVAL_SEC = 20.0
 FIRE_EVENT_MIN_CONF_DELTA = 0.08
-
-# High-risk device event dedupe/throttle for MQTT -> backend alerts.
-DEVICE_EVENT_MIN_SEND_INTERVAL_SEC = 20.0
-DEVICE_EVENT_MIN_CONF_DELTA = 0.08

@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     mqtt_topic_camera: str = "camera/#"
     mqtt_topic_arm: str = "arm/#"
     fire_event_min_confidence: float = 0.6
+    device_event_min_confidence: float = 0.6
+    risky_device_cooldown_seconds: int = 120
     
     # Serial (for arm control)
     serial_port: str = "COM3"
@@ -34,6 +36,7 @@ class Settings(BaseSettings):
     video_stream_port: int = 8080
     video_upload_dir: str = "./uploads/videos"
     fire_frames_upload_dir: str = "./uploads/fire_frames"
+    frames_upload_dir: str = "./uploads/frames"
     # If set, Pi can upload frames with header X-Fire-Frame-Key: <value> (no JWT).
     fire_frame_upload_api_key: Optional[str] = None
     # Full public base URL for links returned to Pi (e.g. http://192.168.100.4:8000). If unset, request URL is used.

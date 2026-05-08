@@ -15,12 +15,9 @@ from smart_fire_system.behavior.cycle import CycleState, at_origin_stepper_servo
 from smart_fire_system.calibration.mapper import CalibrationMapper
 from smart_fire_system.config import *
 from smart_fire_system.control.arduino import ArduinoController
-from smart_fire_system.detection.appliance_detector import ApplianceDetector
-from smart_fire_system.detection.appliance_types import ApplianceDetection
 from smart_fire_system.detection.hailo_detector import HailoDetector
 from smart_fire_system.tracking.fire_state import ConfidenceFireTracker, FireTrack, LockedFireTarget
 from smart_fire_system.tracking.tracker import CenteringCommand
-from smart_fire_system.utils.logger import log_json
 from smart_fire_system.vision.draw import (
     COLOR_FIRE,
     COLOR_FPS,
@@ -31,7 +28,6 @@ from smart_fire_system.vision.draw import (
     draw_zones,
 )
 from smart_fire_system.runtime_direct_mqtt_helper import (
-    DeviceEventRuntimePublisher,
     FireEventRuntimePublisher,
     save_fire_frame,
     to_iso_datetime,
@@ -51,7 +47,6 @@ class DetectionSnapshot:
     extinguished_ids: tuple[int, ...]
     infer_ms: float
     raw_fire_count: int
-    appliance_detections: tuple[ApplianceDetection, ...]
     event_seq: int
 
 
@@ -239,14 +234,6 @@ def main() -> None:
         min_infer_interval_s=0.0,
         infer_frame_stride=1,
     )
-    appliance_detector = ApplianceDetector(
-        APPLIANCE_MODEL_PATH,
-        APPLIANCE_LABELS,
-        APPLIANCE_MIN_CONFIDENCE,
-        debug=DEBUG,
-        min_infer_interval_s=DETECTION_MIN_INTERVAL_S,
-        infer_frame_stride=DETECTION_FRAME_STRIDE,
-    )
     arduino = _build_arduino()
     mapper = CalibrationMapper(debug=CALIBRATION_DEBUG, calibration_mode=CALIBRATION_MODE)
     confidence_tracker = ConfidenceFireTracker(
@@ -310,12 +297,6 @@ def main() -> None:
 
             detections = detector.process_frame(frame, timestamp=timestamp)
             raw_fire_detections = _raw_fire_detections(detections)
-            appliance_detections: list[ApplianceDetection] = []
-            try:
-                appliance_detections = appliance_detector.process_frame(frame, timestamp=timestamp)
-            except Exception as exc:
-                print(f"[Appliance] Inference error (non-fatal): {exc}")
-                appliance_detections = []
             with tracker_lock:
                 if accept_new_targets.is_set():
                     active_fires, activated_ids, extinguished_ids = confidence_tracker.update(
@@ -343,7 +324,6 @@ def main() -> None:
                 extinguished_ids=extinguished_ids,
                 infer_ms=detector.last_infer_ms,
                 raw_fire_count=len(raw_fire_detections),
-                appliance_detections=tuple(appliance_detections),
                 event_seq=event_seq,
             )
             with latest_lock:
@@ -369,13 +349,6 @@ def main() -> None:
         min_send_interval_sec=FIRE_EVENT_MIN_SEND_INTERVAL_SEC,
         min_conf_delta_to_resend=FIRE_EVENT_MIN_CONF_DELTA,
     )
-    device_event_publisher = DeviceEventRuntimePublisher(
-        backend_base_url=BACKEND_BASE_URL,
-        upload_api_key=FIRE_FRAME_UPLOAD_API_KEY,
-        min_send_interval_sec=DEVICE_EVENT_MIN_SEND_INTERVAL_SEC,
-        min_conf_delta_to_resend=DEVICE_EVENT_MIN_CONF_DELTA,
-    )
-    last_appliance_log_frame_id = -1
 
     def set_pump(on: bool, *, force: bool = False) -> None:
         nonlocal pump_engaged
@@ -490,53 +463,6 @@ def main() -> None:
             draw_crosshair(frame, snapshot.frame_w, snapshot.frame_h)
             if snapshot.detections:
                 draw_detections(frame, list(snapshot.detections), FIRE_SMOKE_LABELS, COLOR_FIRE)
-            if snapshot.appliance_detections:
-                for device in snapshot.appliance_detections:
-                    zone = cxcy_to_zone(device.cx, device.cy, snapshot.frame_w, snapshot.frame_h)
-                    x1, y1, x2, y2 = device.box
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 180, 0), 2)
-                    cv2.putText(
-                        frame,
-                        f"{device.label.upper()} | {device.confidence:.2f} | ZONE {zone}",
-                        (x1, max(y1 - 8, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (255, 180, 0),
-                        2,
-                    )
-            if snapshot.appliance_detections and snapshot.frame_id != last_appliance_log_frame_id:
-                for device in snapshot.appliance_detections:
-                    zone = cxcy_to_zone(device.cx, device.cy, snapshot.frame_w, snapshot.frame_h)
-                    log_json(
-                        LOG_FILE,
-                        {
-                            "event": "device_detected",
-                            "label": device.label,
-                            "confidence": round(float(device.confidence), 4),
-                            "zone": int(zone),
-                            "timestamp": to_iso_datetime(snapshot.timestamp),
-                        },
-                    )
-                last_appliance_log_frame_id = snapshot.frame_id
-            if snapshot.appliance_detections:
-                top_device = max(snapshot.appliance_detections, key=lambda d: float(d.confidence))
-                top_zone = cxcy_to_zone(top_device.cx, top_device.cy, snapshot.frame_w, snapshot.frame_h)
-                device_frame_path = save_fire_frame(snapshot.frame, FIRE_FRAMES_DIR, snapshot.frame_id)
-                device_event_publisher.send_if_needed(
-                    broker_host=MQTT_BROKER_HOST,
-                    broker_port=MQTT_BROKER_PORT,
-                    topic=MQTT_TOPIC_FIRE,
-                    qos=MQTT_QOS,
-                    detection_type=top_device.label,
-                    confidence=float(top_device.confidence),
-                    frame_id=int(snapshot.frame_id),
-                    zone=int(top_zone),
-                    frame_path=device_frame_path,
-                    dateandtime=to_iso_datetime(snapshot.timestamp),
-                    device_id=MQTT_DEVICE_ID,
-                    camera_id=MQTT_CAMERA_ID,
-                    now_ts=snapshot.timestamp,
-                )
             if current_fire is not None:
                 cx, cy = current_fire.centroid
                 cv2.drawMarker(frame, (int(round(cx)), int(round(cy))), (0, 0, 255), cv2.MARKER_CROSS, 24, 2)

@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.core.security import get_current_active_user
 from app.models.user import User
-from app.models.alert import Alert, AlertStatus
+from app.models.alert import Alert
 from app.schemas.alert import AlertCreate, AlertRead, AlertUpdate
 from app.services.notification_service import notification_service
 
@@ -13,17 +13,13 @@ router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
 @router.get("", response_model=List[AlertRead])
 async def get_alerts(
-    status_filter: Optional[AlertStatus] = None,
     skip: int = 0,
     limit: int = 100,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get all alerts, optionally filtered by status"""
-    if status_filter:
-        statement = select(Alert).where(Alert.status == status_filter).offset(skip).limit(limit)
-    else:
-        statement = select(Alert).offset(skip).limit(limit)
+    """Get all alerts"""
+    statement = select(Alert).offset(skip).limit(limit)
     statement = statement.order_by(Alert.created_at.desc())
     alerts = session.exec(statement).all()
     return alerts
@@ -52,12 +48,9 @@ async def create_alert(
     alert = await notification_service.create_alert(
         session=session,
         alert_type=alert_data.alert_type,
-        title=alert_data.title,
-        message=alert_data.message,
-        severity=alert_data.severity,
-        sensor_id=alert_data.sensor_id,
-        device_id=alert_data.device_id,
-        fire_event_id=alert_data.fire_event_id
+        risky_device_id=alert_data.risky_device_id,
+        fire_event_id=alert_data.fire_event_id,
+        sensor_reading_id=alert_data.sensor_reading_id,
     )
     return alert
 
