@@ -278,7 +278,7 @@ def handle_camera_message(topic: str, payload: dict):
                 ):
                     delta_sec = (received_at - last_risky.detected_at).total_seconds()
                     if 0 <= delta_sec < settings.risky_device_cooldown_seconds:
-                        logger.info(
+                        logger.debug(
                             "Risky device cooldown active: type=%s zone=%s last=%s now=%s cooldown=%ss",
                             device_name,
                             zone,

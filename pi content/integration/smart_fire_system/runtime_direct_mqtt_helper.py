@@ -7,7 +7,10 @@ Direct MQTT publish helper for production runtime (Option A).
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +18,60 @@ from typing import Any
 
 import cv2
 import requests
+
+
+def _mosquitto_pub_binary() -> str:
+    ov = os.environ.get("MOSQUITTO_PUB_EXE", "").strip()
+    if ov and os.path.isfile(ov):
+        return ov
+    w = shutil.which("mosquitto_pub")
+    if w:
+        return w
+    for p in ("/usr/bin/mosquitto_pub", "/usr/sbin/mosquitto_pub", "/bin/mosquitto_pub"):
+        if os.path.isfile(p):
+            return p
+    return "mosquitto_pub"
+
+
+def _subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = "/usr/local/bin:/usr/local/sbin:/usr/bin:/sbin:/bin" + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def _mosquitto_pub_cmd(
+    *,
+    broker_host: str,
+    broker_port: int,
+    topic: str,
+    qos: int,
+    message: str,
+    username: str = "",
+    password: str = "",
+    use_tls: bool = False,
+    tls_capath: str = "/etc/ssl/certs",
+) -> list[str]:
+    cmd: list[str] = [
+        _mosquitto_pub_binary(),
+        "-h",
+        str(broker_host),
+        "-p",
+        str(broker_port),
+        "-t",
+        str(topic),
+        "-q",
+        str(qos),
+        "-m",
+        message,
+    ]
+    if username:
+        cmd.extend(["-u", str(username)])
+    if password:
+        cmd.extend(["-P", str(password)])
+    if use_tls:
+        # Prefer OS bundle (matches HiveMQ TLS on Raspberry Pi OS / Debian; avoids bad CRLF pasted paths).
+        cmd.append("--tls-use-os-certs")
+    return cmd
 
 
 def save_fire_frame(frame: Any, fire_frames_dir: str, frame_id: int) -> str:
@@ -51,6 +108,10 @@ def publish_fire_event_via_mosquitto(
     dateandtime: str,
     device_id: int,
     camera_id: int,
+    mqtt_username: str = "",
+    mqtt_password: str = "",
+    mqtt_use_tls: bool = False,
+    mqtt_tls_capath: str = "/etc/ssl/certs",
 ) -> bool:
     payload = {
         "alert_status": "FIRE_DETECTED",
@@ -64,32 +125,36 @@ def publish_fire_event_via_mosquitto(
         "device_id": int(device_id),
         "camera_id": int(camera_id),
     }
+    cmd_list = _mosquitto_pub_cmd(
+        broker_host=broker_host,
+        broker_port=broker_port,
+        topic=topic,
+        qos=qos,
+        message=json.dumps(payload),
+        username=mqtt_username,
+        password=mqtt_password,
+        use_tls=mqtt_use_tls,
+        tls_capath=mqtt_tls_capath,
+    )
     try:
         subprocess.run(
-            [
-                "mosquitto_pub",
-                "-h",
-                str(broker_host),
-                "-p",
-                str(broker_port),
-                "-t",
-                str(topic),
-                "-q",
-                str(qos),
-                "-m",
-                json.dumps(payload),
-            ],
+            cmd_list,
             check=True,
             capture_output=True,
             text=True,
+            env=_subprocess_env(),
         )
+        print(f"[MQTT] OK published FIRE -> {topic} ({broker_host}:{broker_port})", flush=True)
         return True
     except FileNotFoundError:
-        print("[MQTT] mosquitto_pub not found. Install mosquitto-clients.")
+        print("[MQTT] mosquitto_pub not found — sudo apt install mosquitto-clients", flush=True)
         return False
     except subprocess.CalledProcessError as exc:
         err = (exc.stderr or exc.stdout or "").strip()
-        print(f"[MQTT] publish failed: {err}")
+        print(f"[MQTT] publish FIRE failed: {err}", flush=True)
+        return False
+    except Exception as exc:
+        print(f"[MQTT] publish FIRE error: {exc}", flush=True)
         return False
 
 
@@ -108,6 +173,10 @@ def publish_device_event_via_mosquitto(
     dateandtime: str,
     device_id: int,
     camera_id: int,
+    mqtt_username: str = "",
+    mqtt_password: str = "",
+    mqtt_use_tls: bool = False,
+    mqtt_tls_capath: str = "/etc/ssl/certs",
 ) -> bool:
     payload = {
         "alert_status": "DEVICE_DETECTED",
@@ -121,32 +190,36 @@ def publish_device_event_via_mosquitto(
         "device_id": int(device_id),
         "camera_id": int(camera_id),
     }
+    cmd_list = _mosquitto_pub_cmd(
+        broker_host=broker_host,
+        broker_port=broker_port,
+        topic=topic,
+        qos=qos,
+        message=json.dumps(payload),
+        username=mqtt_username,
+        password=mqtt_password,
+        use_tls=mqtt_use_tls,
+        tls_capath=mqtt_tls_capath,
+    )
     try:
         subprocess.run(
-            [
-                "mosquitto_pub",
-                "-h",
-                str(broker_host),
-                "-p",
-                str(broker_port),
-                "-t",
-                str(topic),
-                "-q",
-                str(qos),
-                "-m",
-                json.dumps(payload),
-            ],
+            cmd_list,
             check=True,
             capture_output=True,
             text=True,
+            env=_subprocess_env(),
         )
+        print(f"[MQTT] OK published DEVICE -> {topic} ({broker_host}:{broker_port})", flush=True)
         return True
     except FileNotFoundError:
-        print("[MQTT] mosquitto_pub not found. Install mosquitto-clients.")
+        print("[MQTT] mosquitto_pub not found — sudo apt install mosquitto-clients", flush=True)
         return False
     except subprocess.CalledProcessError as exc:
         err = (exc.stderr or exc.stdout or "").strip()
-        print(f"[MQTT] publish failed: {err}")
+        print(f"[MQTT] publish DEVICE failed: {err}", flush=True)
+        return False
+    except Exception as exc:
+        print(f"[MQTT] publish DEVICE error: {exc}", flush=True)
         return False
 
 
@@ -168,6 +241,7 @@ class FireEventRuntimePublisher:
         self._last_sent_at = 0.0
         self._last_zone: int | None = None
         self._last_confidence: float | None = None
+        self._lock = threading.Lock()
 
     def _should_send(self, *, zone: int, confidence: float, now_ts: float) -> bool:
         if self._last_zone is None:
@@ -180,7 +254,7 @@ class FireEventRuntimePublisher:
             return True
         return False
 
-    def _upload_frame_and_get_url(self, frame_path: str, timeout_sec: int = 30) -> str:
+    def _upload_frame_and_get_url(self, frame_path: str, timeout_sec: int = 12) -> str:
         if not frame_path:
             return ""
         url = f"{self.backend_base_url}/api/video/fire-frames/upload"
@@ -193,7 +267,7 @@ class FireEventRuntimePublisher:
                     url,
                     files={"file": (Path(frame_path).name, f, "image/jpeg")},
                     headers=headers,
-                    timeout=timeout_sec,
+                    timeout=(5, timeout_sec),
                 )
             if resp.status_code != 201:
                 print(f"[UPLOAD] failed HTTP {resp.status_code}: {resp.text}")
@@ -218,31 +292,43 @@ class FireEventRuntimePublisher:
         device_id: int,
         camera_id: int,
         now_ts: float | None = None,
+        mqtt_username: str = "",
+        mqtt_password: str = "",
+        mqtt_use_tls: bool = False,
+        mqtt_tls_capath: str = "/etc/ssl/certs",
     ) -> bool:
         now_ts = float(now_ts if now_ts is not None else time.time())
-        if not self._should_send(zone=zone, confidence=confidence, now_ts=now_ts):
-            return False
+        with self._lock:
+            if not self._should_send(zone=zone, confidence=confidence, now_ts=now_ts):
+                return False
 
-        frame_url = self._upload_frame_and_get_url(frame_path)
-        sent = publish_fire_event_via_mosquitto(
-            broker_host=broker_host,
-            broker_port=broker_port,
-            topic=topic,
-            qos=qos,
-            confidence=float(confidence),
-            frame_id=int(frame_id),
-            zone=int(zone),
-            frame_path=frame_path,
-            frame_url=frame_url,
-            dateandtime=dateandtime,
-            device_id=int(device_id),
-            camera_id=int(camera_id),
-        )
-        if sent:
-            self._last_zone = int(zone)
-            self._last_confidence = float(confidence)
-            self._last_sent_at = now_ts
-        return sent
+            frame_url = ""
+            if frame_path:
+                frame_url = self._upload_frame_and_get_url(frame_path) or ""
+
+            sent = publish_fire_event_via_mosquitto(
+                broker_host=broker_host,
+                broker_port=broker_port,
+                topic=topic,
+                qos=qos,
+                confidence=float(confidence),
+                frame_id=int(frame_id),
+                zone=int(zone),
+                frame_path=frame_path,
+                frame_url=frame_url,
+                dateandtime=dateandtime,
+                device_id=int(device_id),
+                camera_id=int(camera_id),
+                mqtt_username=mqtt_username,
+                mqtt_password=mqtt_password,
+                mqtt_use_tls=mqtt_use_tls,
+                mqtt_tls_capath=mqtt_tls_capath,
+            )
+            if sent:
+                self._last_zone = int(zone)
+                self._last_confidence = float(confidence)
+                self._last_sent_at = now_ts
+            return sent
 
 
 class DeviceEventRuntimePublisher:
@@ -264,6 +350,7 @@ class DeviceEventRuntimePublisher:
         self._last_zone: int | None = None
         self._last_type: str | None = None
         self._last_confidence: float | None = None
+        self._lock = threading.Lock()
 
     def _should_send(self, *, detection_type: str, zone: int, confidence: float, now_ts: float) -> bool:
         if self._last_type is None:
@@ -278,7 +365,7 @@ class DeviceEventRuntimePublisher:
             return True
         return False
 
-    def _upload_frame_and_get_url(self, frame_path: str, timeout_sec: int = 30) -> str:
+    def _upload_frame_and_get_url(self, frame_path: str, timeout_sec: int = 12) -> str:
         if not frame_path:
             return ""
         url = f"{self.backend_base_url}/api/video/frames/upload"
@@ -291,7 +378,7 @@ class DeviceEventRuntimePublisher:
                     url,
                     files={"file": (Path(frame_path).name, f, "image/jpeg")},
                     headers=headers,
-                    timeout=timeout_sec,
+                    timeout=(5, timeout_sec),
                 )
             if resp.status_code != 201:
                 print(f"[UPLOAD] failed HTTP {resp.status_code}: {resp.text}")
@@ -317,33 +404,45 @@ class DeviceEventRuntimePublisher:
         device_id: int,
         camera_id: int,
         now_ts: float | None = None,
+        mqtt_username: str = "",
+        mqtt_password: str = "",
+        mqtt_use_tls: bool = False,
+        mqtt_tls_capath: str = "/etc/ssl/certs",
     ) -> bool:
         now_ts = float(now_ts if now_ts is not None else time.time())
-        if not self._should_send(
-            detection_type=detection_type, zone=zone, confidence=confidence, now_ts=now_ts
-        ):
-            return False
+        with self._lock:
+            if not self._should_send(
+                detection_type=detection_type, zone=zone, confidence=confidence, now_ts=now_ts
+            ):
+                return False
 
-        frame_url = self._upload_frame_and_get_url(frame_path)
-        sent = publish_device_event_via_mosquitto(
-            broker_host=broker_host,
-            broker_port=broker_port,
-            topic=topic,
-            qos=qos,
-            detection_type=str(detection_type),
-            confidence=float(confidence),
-            frame_id=int(frame_id),
-            zone=int(zone),
-            frame_path=frame_path,
-            frame_url=frame_url,
-            dateandtime=str(dateandtime),
-            device_id=int(device_id),
-            camera_id=int(camera_id),
-        )
-        if sent:
-            self._last_type = str(detection_type)
-            self._last_zone = int(zone)
-            self._last_confidence = float(confidence)
-            self._last_sent_at = now_ts
-        return sent
+            frame_url = ""
+            if frame_path:
+                frame_url = self._upload_frame_and_get_url(frame_path) or ""
+
+            sent = publish_device_event_via_mosquitto(
+                broker_host=broker_host,
+                broker_port=broker_port,
+                topic=topic,
+                qos=qos,
+                detection_type=str(detection_type),
+                confidence=float(confidence),
+                frame_id=int(frame_id),
+                zone=int(zone),
+                frame_path=frame_path,
+                frame_url=frame_url,
+                dateandtime=str(dateandtime),
+                device_id=int(device_id),
+                camera_id=int(camera_id),
+                mqtt_username=mqtt_username,
+                mqtt_password=mqtt_password,
+                mqtt_use_tls=mqtt_use_tls,
+                mqtt_tls_capath=mqtt_tls_capath,
+            )
+            if sent:
+                self._last_type = str(detection_type)
+                self._last_zone = int(zone)
+                self._last_confidence = float(confidence)
+                self._last_sent_at = now_ts
+            return sent
 

@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 from picamera2 import Picamera2
 
+from smart_fire_system import config as _sfs_config
 from smart_fire_system.behavior.cycle import CycleState, at_origin_stepper_servo, tracking_settled
 from smart_fire_system.calibration.mapper import CalibrationMapper
 from smart_fire_system.config import *
@@ -36,6 +37,8 @@ from smart_fire_system.runtime_direct_mqtt_helper import (
     save_fire_frame,
     to_iso_datetime,
 )
+
+MQTT_TLS_CAPATH = getattr(_sfs_config, "MQTT_TLS_CAPATH", "/etc/ssl/certs")
 
 
 @dataclass(frozen=True)
@@ -375,7 +378,44 @@ def main() -> None:
         min_send_interval_sec=DEVICE_EVENT_MIN_SEND_INTERVAL_SEC,
         min_conf_delta_to_resend=DEVICE_EVENT_MIN_CONF_DELTA,
     )
+    _mqtt_use_tls = bool(MQTT_BROKER_PORT == 8883)
     last_appliance_log_frame_id = -1
+
+    print(
+        f"[Config] MQTT_ENABLED={MQTT_ENABLED} broker={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT} "
+        f"tls={_mqtt_use_tls} topic={MQTT_TOPIC_FIRE} creds={'yes' if (MQTT_USERNAME and MQTT_PASSWORD) else 'NO'} "
+        "| BACKEND_HTTP=" + BACKEND_BASE_URL.rstrip("/")
+    )
+    if MQTT_ENABLED and _mqtt_use_tls and (not MQTT_USERNAME or not MQTT_PASSWORD):
+        print("[Config] ERROR: HiveMQ/port 8883 needs MQTT_USERNAME and MQTT_PASSWORD set on the Pi; publishes will fail.")
+    if MQTT_ENABLED and MQTT_BROKER_HOST.strip().lower() in ("localhost", "127.0.0.1") and MQTT_BROKER_PORT == 8883:
+        print("[Config] WARNING: Broker is localhost but port is 8883 — probably wrong. Set MQTT_BROKER_HOST to your *.hivemq.cloud host.")
+    if MQTT_ENABLED and not str(FIRE_FRAME_UPLOAD_API_KEY).strip():
+        print("[Config] WARNING: FIRE_FRAME_UPLOAD_API_KEY empty — uploads fail; MQTT still tries to publish.", flush=True)
+
+    # Upload + mosquitto_pub run in the main loop; offload so MJPEG/live view never freezes
+    # while waiting on HTTP or MQTT (blocked backend URLs were freezing the feed for tens of seconds).
+    def _fire_event_send_bg(**kwargs):
+        def _run():
+            if not MQTT_ENABLED:
+                return
+            try:
+                fire_event_publisher.send_if_needed(**kwargs)
+            except Exception as exc:
+                print(f"[FireEvent MQTT/UPLOAD] background error: {exc}", flush=True)
+
+        threading.Thread(target=_run, daemon=True, name="fire-event-mqtt").start()
+
+    def _device_event_send_bg(**kwargs):
+        def _run():
+            if not MQTT_ENABLED:
+                return
+            try:
+                device_event_publisher.send_if_needed(**kwargs)
+            except Exception as exc:
+                print(f"[DeviceEvent MQTT/UPLOAD] background error: {exc}", flush=True)
+
+        threading.Thread(target=_run, daemon=True, name="device-event-mqtt").start()
 
     def set_pump(on: bool, *, force: bool = False) -> None:
         nonlocal pump_engaged
@@ -440,7 +480,7 @@ def main() -> None:
                         zone = cxcy_to_zone(*selected.centroid, snapshot.frame_w, snapshot.frame_h)
                         frame_path = save_fire_frame(snapshot.frame, FIRE_FRAMES_DIR, snapshot.frame_id)
                         dateandtime = to_iso_datetime(snapshot.timestamp)
-                        fire_event_publisher.send_if_needed(
+                        _fire_event_send_bg(
                             broker_host=MQTT_BROKER_HOST,
                             broker_port=MQTT_BROKER_PORT,
                             topic=MQTT_TOPIC_FIRE,
@@ -453,6 +493,10 @@ def main() -> None:
                             device_id=MQTT_DEVICE_ID,
                             camera_id=MQTT_CAMERA_ID,
                             now_ts=snapshot.timestamp,
+                            mqtt_username=str(MQTT_USERNAME or ""),
+                            mqtt_password=str(MQTT_PASSWORD or ""),
+                            mqtt_use_tls=_mqtt_use_tls,
+                            mqtt_tls_capath=str(MQTT_TLS_CAPATH),
                         )
                         print(
                             f"[Cycle] ACTIVE FIRE DETECTED id={selected.id} "
@@ -522,7 +566,7 @@ def main() -> None:
                 top_device = max(snapshot.appliance_detections, key=lambda d: float(d.confidence))
                 top_zone = cxcy_to_zone(top_device.cx, top_device.cy, snapshot.frame_w, snapshot.frame_h)
                 device_frame_path = save_fire_frame(snapshot.frame, FIRE_FRAMES_DIR, snapshot.frame_id)
-                device_event_publisher.send_if_needed(
+                _device_event_send_bg(
                     broker_host=MQTT_BROKER_HOST,
                     broker_port=MQTT_BROKER_PORT,
                     topic=MQTT_TOPIC_FIRE,
@@ -536,6 +580,10 @@ def main() -> None:
                     device_id=MQTT_DEVICE_ID,
                     camera_id=MQTT_CAMERA_ID,
                     now_ts=snapshot.timestamp,
+                    mqtt_username=str(MQTT_USERNAME or ""),
+                    mqtt_password=str(MQTT_PASSWORD or ""),
+                    mqtt_use_tls=_mqtt_use_tls,
+                    mqtt_tls_capath=str(MQTT_TLS_CAPATH),
                 )
             if current_fire is not None:
                 cx, cy = current_fire.centroid

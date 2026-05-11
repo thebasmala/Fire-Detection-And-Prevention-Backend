@@ -29,8 +29,8 @@ DETECTION_MIN_INTERVAL_S = 0.22
 DETECTION_FRAME_STRIDE = 2
 
 # --- 3-state machine: IDLE → TARGETING → MONITORING ---
-# Consecutive valid frames required before a fire becomes active.
-FIRE_ACTIVE_CONFIRM_FRAMES = 2
+# Frames before a fire becomes active (MQTT fire path needs active + locked_target). Increase to reduce false MQTT.
+FIRE_ACTIVE_CONFIRM_FRAMES = 1
 # Consecutive missing frames required before an active fire is extinguished.
 FIRE_EXTINGUISH_MISSING_FRAMES = 10
 # Pixel radius used to keep the same ID across frames.
@@ -210,12 +210,30 @@ os.makedirs(FIRE_FRAMES_DIR, exist_ok=True)
 
 
 MQTT_ENABLED = True
-MQTT_BROKER_HOST = "localhost"
+# mosquitto_pub target: use 127.0.0.1 when Mosquitto runs ON THIS PI (normal layout).
+# If Mosquitto runs on another machine, set SMART_FIRE_MQTT_HOST to that host's LAN IP before starting.
+# Prefer 127.0.0.1 over "localhost" on the Pi (IPv4 vs IPv6 loopback mismatch with some brokers).
+MQTT_BROKER_HOST = "127.0.0.1"
 MQTT_BROKER_PORT = 1883
+MQTT_USERNAME = ""
+MQTT_PASSWORD = ""
+MQTT_TLS_CAPATH = "/etc/ssl/certs"
 MQTT_TOPIC_FIRE = "camera/pi"
 MQTT_QOS = 1
 MQTT_DEVICE_ID = 1
 MQTT_CAMERA_ID = 1
+
+# Optional SMART_FIRE_MQTT_* overrides (set on the Raspberry Pi shell / systemd unit).
+MQTT_BROKER_HOST = os.environ.get("SMART_FIRE_MQTT_HOST", MQTT_BROKER_HOST).strip() or "127.0.0.1"
+_p = os.environ.get("SMART_FIRE_MQTT_PORT", "").strip()
+if _p:
+    try:
+        MQTT_BROKER_PORT = int(_p)
+    except ValueError:
+        pass
+MQTT_USERNAME = os.environ.get("SMART_FIRE_MQTT_USER", MQTT_USERNAME).strip()
+MQTT_PASSWORD = os.environ.get("SMART_FIRE_MQTT_PASS", MQTT_PASSWORD)
+
 
 # Built-in MJPEG server (single camera owner mode).
 # Keep this enabled when running smart_fire_main.py so you do not need a second
@@ -225,10 +243,16 @@ MJPEG_STREAM_HOST = "0.0.0.0"
 MJPEG_STREAM_PORT = 5000
 MJPEG_JPEG_QUALITY = 85
 
-# Backend frame upload (real public URL for backend video_url)
-# BACKEND_BASE_URL = "http://192.168.100.4:8000"
-BACKEND_BASE_URL = "http://Basmala.local:8000"
-FIRE_FRAME_UPLOAD_API_KEY = "f7k2m9x4p1q8w3n6j5r0t2y8u1v4z9s"
+# Backend frame uploads — Pi POSTs JPEGs here; must be reachable from the Pi (LAN IP of the PC running FastAPI).
+# Override any time: export SMART_FIRE_BACKEND_URL=http://YOUR_PC_IP:8000
+# Keys must match backend .env FIRE_FRAME_UPLOAD_API_KEY (override Pi side with SMART_FIRE_FRAME_KEY if needed).
+_BACKEND_URL_DEFAULT = "http://192.168.100.4:8000"
+BACKEND_BASE_URL = (
+    os.environ.get("SMART_FIRE_BACKEND_URL", "").strip().rstrip("/")
+    or _BACKEND_URL_DEFAULT.strip().rstrip("/")
+)
+_FILE_FIRE_UPLOAD_KEY = "f7k2m9x4p1q8w3n6j5r0t2y8u1v4z9s"
+FIRE_FRAME_UPLOAD_API_KEY = os.environ.get("SMART_FIRE_FRAME_KEY", "").strip() or _FILE_FIRE_UPLOAD_KEY
 
 # Alert dedupe/throttle:
 # send first event, then resend only if zone/confidence changed
