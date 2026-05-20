@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     fire_frame_upload_api_key: Optional[str] = None
     # Full public base URL for links returned to Pi (e.g. http://192.168.100.4:8000). If unset, request URL is used.
     public_api_base_url: Optional[str] = None
+
+    # Cloudinary (optional — if all three are set, frame uploads use Cloudinary)
+    cloudinary_cloud_name: Optional[str] = None
+    cloudinary_api_key: Optional[str] = None
+    cloudinary_api_secret: Optional[str] = None
     
     # Data retention
     sensor_data_retention_days: int = 30

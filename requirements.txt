@@ -14,4 +14,5 @@ aiofiles==23.2.1
 pyserial==3.5
 email-validator==2.1.0
 httpx==0.25.2
+cloudinary>=1.36.0,<2
 

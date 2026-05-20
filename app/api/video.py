@@ -1,7 +1,5 @@
 from typing import List
 import logging
-import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -11,6 +9,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import get_session
 from app.core.security import get_current_active_user, require_fire_frame_upload_auth
+from app.core.storage import FOLDER_DEVICE_FRAMES, FOLDER_FIRE_FRAMES, save_image_bytes
 from app.models.user import User
 from app.models.device import Device
 from app.models.video_stream import VideoStream
@@ -20,8 +19,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/video", tags=["Video"])
-
-_ALLOWED_FRAME_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def _resolve_stream_or_404(session: Session, stream_id: int) -> VideoStream:
@@ -82,21 +79,22 @@ async def upload_fire_frame(
     file: UploadFile = File(...),
     _: None = Depends(require_fire_frame_upload_auth),
 ):
-    """Store a fire snapshot JPEG/PNG on the backend and return a URL for MQTT / DB (video_url)."""
+    """Store a fire snapshot and return a public URL for MQTT / DB."""
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
-    suffix = Path(file.filename or "frame.jpg").suffix.lower()
-    if suffix not in _ALLOWED_FRAME_EXT:
-        suffix = ".jpg"
-    safe_name = f"{uuid.uuid4().hex}{suffix}"
-    dest = Path(settings.fire_frames_upload_dir) / safe_name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
     base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
-    public_url = f"{base}/static/fire_frames/{safe_name}"
-    logger.info("Fire frame saved: %s", public_url)
-    return FireFrameUploadResponse(url=public_url, filename=safe_name)
+    try:
+        public_url, stored_name = save_image_bytes(
+            data,
+            FOLDER_FIRE_FRAMES,
+            original_filename=file.filename or "frame.jpg",
+            public_base_url=base,
+        )
+    except Exception as exc:
+        logger.exception("Fire frame upload failed")
+        raise HTTPException(status_code=500, detail="Failed to store fire frame") from exc
+    return FireFrameUploadResponse(url=public_url, filename=stored_name)
 
 
 @router.post(
@@ -109,21 +107,22 @@ async def upload_general_frame(
     file: UploadFile = File(...),
     _: None = Depends(require_fire_frame_upload_auth),
 ):
-    """Store general snapshot JPEG/PNG (e.g., risky device) and return public URL."""
+    """Store risky-device snapshot and return public URL."""
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
-    suffix = Path(file.filename or "frame.jpg").suffix.lower()
-    if suffix not in _ALLOWED_FRAME_EXT:
-        suffix = ".jpg"
-    safe_name = f"{uuid.uuid4().hex}{suffix}"
-    dest = Path(settings.frames_upload_dir) / safe_name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
     base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
-    public_url = f"{base}/static/frames/{safe_name}"
-    logger.info("General frame saved: %s", public_url)
-    return FireFrameUploadResponse(url=public_url, filename=safe_name)
+    try:
+        public_url, stored_name = save_image_bytes(
+            data,
+            FOLDER_DEVICE_FRAMES,
+            original_filename=file.filename or "frame.jpg",
+            public_base_url=base,
+        )
+    except Exception as exc:
+        logger.exception("Device frame upload failed")
+        raise HTTPException(status_code=500, detail="Failed to store device frame") from exc
+    return FireFrameUploadResponse(url=public_url, filename=stored_name)
 
 
 @router.post("/streams", response_model=VideoStreamRead, status_code=status.HTTP_201_CREATED)
@@ -194,8 +193,7 @@ async def delete_video_stream(
     stream = session.get(VideoStream, stream_id)
     if not stream:
         raise HTTPException(status_code=404, detail="Video stream not found")
-    
+
     session.delete(stream)
     session.commit()
     return None
-
