@@ -378,18 +378,31 @@ def main() -> None:
         min_send_interval_sec=DEVICE_EVENT_MIN_SEND_INTERVAL_SEC,
         min_conf_delta_to_resend=DEVICE_EVENT_MIN_CONF_DELTA,
     )
-    _mqtt_use_tls = bool(MQTT_BROKER_PORT == 8883)
+    _mqtt_use_tls = mqtt_use_tls()
     last_appliance_log_frame_id = -1
 
     print(
-        f"[Config] MQTT_ENABLED={MQTT_ENABLED} broker={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT} "
-        f"tls={_mqtt_use_tls} topic={MQTT_TOPIC_FIRE} creds={'yes' if (MQTT_USERNAME and MQTT_PASSWORD) else 'NO'} "
-        "| BACKEND_HTTP=" + BACKEND_BASE_URL.rstrip("/")
+        f"[Config] MQTT_ENABLED={MQTT_ENABLED} mode={'cloud' if mqtt_cloud_mode() else 'local'} "
+        f"broker={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT} tls={_mqtt_use_tls} topic={MQTT_TOPIC_FIRE} "
+        f"creds={'yes' if mqtt_cloud_mode() else 'NO'} | BACKEND_HTTP=" + BACKEND_BASE_URL.rstrip("/"),
+        flush=True,
     )
-    if MQTT_ENABLED and _mqtt_use_tls and (not MQTT_USERNAME or not MQTT_PASSWORD):
-        print("[Config] ERROR: HiveMQ/port 8883 needs MQTT_USERNAME and MQTT_PASSWORD set on the Pi; publishes will fail.")
-    if MQTT_ENABLED and MQTT_BROKER_HOST.strip().lower() in ("localhost", "127.0.0.1") and MQTT_BROKER_PORT == 8883:
-        print("[Config] WARNING: Broker is localhost but port is 8883 — probably wrong. Set MQTT_BROKER_HOST to your *.hivemq.cloud host.")
+    if MQTT_ENABLED and MQTT_BROKER_PORT == 8883 and not mqtt_cloud_mode():
+        print(
+            "[Config] ERROR: port 8883 requires MQTT_USERNAME and MQTT_PASSWORD "
+            "(export SMART_FIRE_MQTT_USER / SMART_FIRE_MQTT_PASS or edit config.py).",
+            flush=True,
+        )
+    if MQTT_ENABLED and mqtt_cloud_mode() and MQTT_BROKER_HOST.strip().lower() in (
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    ):
+        print(
+            "[Config] WARNING: cloud credentials set but broker is loopback — "
+            "set SMART_FIRE_MQTT_HOST to your *.hivemq.cloud host.",
+            flush=True,
+        )
     if MQTT_ENABLED and not str(FIRE_FRAME_UPLOAD_API_KEY).strip():
         print("[Config] WARNING: FIRE_FRAME_UPLOAD_API_KEY empty — uploads fail; MQTT still tries to publish.", flush=True)
 

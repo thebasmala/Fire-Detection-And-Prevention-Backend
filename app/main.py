@@ -42,17 +42,11 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
     os.makedirs(settings.fire_frames_upload_dir, exist_ok=True)
     
-    # Connect MQTT client
-    try:
-        mqtt_client.connect()
-        logger.info("MQTT client connected")
-    except Exception as e:
-        logger.error(f"Failed to connect MQTT client: {e}")
-    
-    # Register MQTT message handlers
+    # Register MQTT message handlers, then start resilient connect/retry loop
     mqtt_client.register_handler("sensors/#", handle_sensor_message)
     mqtt_client.register_handler("camera/#", handle_camera_message)
     mqtt_client.register_handler("arm/#", handle_arm_message)
+    mqtt_client.start()
 
     # Start background task for sensor data retention
     retention_task = asyncio.create_task(cleanup_old_sensor_readings_task())
@@ -524,9 +518,10 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    mqtt_ok = mqtt_client.mqtt_connected()
     return {
         "status": "healthy",
-        "mqtt_connected": mqtt_client.is_connected
+        "mqtt_connected": mqtt_ok,
     }
 
 

@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/smart_fire_system/integration
+# Optional: MQTT + backend URLs (copy smart_fire_system/mqtt.env.example -> mqtt.env on the Pi)
+EnvironmentFile=-/home/pi/smart_fire_system/integration/smart_fire_system/mqtt.env
 ExecStart=/usr/bin/python3 /home/pi/smart_fire_system/integration/smart_fire_main.py
 Restart=always
 RestartSec=5

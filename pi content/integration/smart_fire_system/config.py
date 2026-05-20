@@ -1,6 +1,26 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+
+def _load_mqtt_env_file() -> None:
+    """Load smart_fire_system/mqtt.env into os.environ if present (optional on Pi)."""
+    env_path = Path(__file__).resolve().parent / "mqtt.env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, val)
+
+
+_load_mqtt_env_file()
 
 DEBUG = True
 
@@ -210,21 +230,33 @@ os.makedirs(FIRE_FRAMES_DIR, exist_ok=True)
 
 
 MQTT_ENABLED = True
-# mosquitto_pub target: use 127.0.0.1 when Mosquitto runs ON THIS PI (normal layout).
-# If Mosquitto runs on another machine, set SMART_FIRE_MQTT_HOST to that host's LAN IP before starting.
-# Prefer 127.0.0.1 over "localhost" on the Pi (IPv4 vs IPv6 loopback mismatch with some brokers).
-MQTT_BROKER_HOST = "127.0.0.1"
-MQTT_BROKER_PORT = 1883
-MQTT_USERNAME = ""
-MQTT_PASSWORD = ""
 MQTT_TLS_CAPATH = "/etc/ssl/certs"
 MQTT_TOPIC_FIRE = "camera/pi"
 MQTT_QOS = 1
 MQTT_DEVICE_ID = 1
 MQTT_CAMERA_ID = 1
 
-# Optional SMART_FIRE_MQTT_* overrides (set on the Raspberry Pi shell / systemd unit).
-MQTT_BROKER_HOST = os.environ.get("SMART_FIRE_MQTT_HOST", MQTT_BROKER_HOST).strip() or "127.0.0.1"
+# --- MQTT broker (publisher = this Pi) — must match where the FastAPI backend subscribes ---
+#
+# HiveMQ Cloud (default): TLS + auth on 8883 — same broker as PC backend .env
+# Local Mosquitto on Pi: set host 127.0.0.1, port 1883, USERNAME="", PASSWORD=""
+#
+# Password: set SMART_FIRE_MQTT_PASS on the Pi (see mqtt.env.example), or edit MQTT_PASSWORD below.
+# If password contains # use quotes: MQTT_PASSWORD="Yellow#0330"
+
+MQTT_BROKER_HOST = "0ea78527b00b4714991d8b2021233019.s1.eu.hivemq.cloud"
+MQTT_BROKER_PORT = 8883
+MQTT_USERNAME = "basmala"
+MQTT_PASSWORD = ""
+
+# Local Mosquitto (uncomment this block and comment the HiveMQ host/port/user above to switch):
+# MQTT_BROKER_HOST = "127.0.0.1"
+# MQTT_BROKER_PORT = 1883
+# MQTT_USERNAME = ""
+# MQTT_PASSWORD = ""
+
+# Environment overrides (recommended: copy mqtt.env.example -> mqtt.env and use systemd EnvironmentFile)
+MQTT_BROKER_HOST = os.environ.get("SMART_FIRE_MQTT_HOST", MQTT_BROKER_HOST).strip() or MQTT_BROKER_HOST
 _p = os.environ.get("SMART_FIRE_MQTT_PORT", "").strip()
 if _p:
     try:
@@ -233,6 +265,16 @@ if _p:
         pass
 MQTT_USERNAME = os.environ.get("SMART_FIRE_MQTT_USER", MQTT_USERNAME).strip()
 MQTT_PASSWORD = os.environ.get("SMART_FIRE_MQTT_PASS", MQTT_PASSWORD)
+
+
+def mqtt_cloud_mode() -> bool:
+    """True when username and password are set → HiveMQ / TLS mode."""
+    return bool((MQTT_USERNAME or "").strip() and (MQTT_PASSWORD or "").strip())
+
+
+def mqtt_use_tls() -> bool:
+    """Use TLS for mosquitto_pub when cloud credentials are configured."""
+    return mqtt_cloud_mode()
 
 
 # Built-in MJPEG server (single camera owner mode).
