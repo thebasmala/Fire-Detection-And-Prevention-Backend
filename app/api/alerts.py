@@ -95,22 +95,6 @@ async def update_alert(
     return _to_read(session, alert)
 
 
-@router.post("/{alert_id}/acknowledge", response_model=AlertRead)
-async def acknowledge_alert(
-    alert_id: int,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_active_user),
-):
-    alert = await notification_service.acknowledge_alert(
-        session=session,
-        alert_id=alert_id,
-        user_id=current_user.id,
-    )
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return _to_read(session, alert)
-
-
 @router.post("/{alert_id}/resolve", response_model=AlertRead)
 async def resolve_alert(
     alert_id: int,

@@ -1,5 +1,7 @@
 """Post-login session payload for web and Flutter."""
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 from app.schemas.user import NotificationPreferencesRead, UserRead
@@ -18,8 +20,7 @@ class ClientEndpoints(BaseModel):
     alerts: str
     docs: str
     health: str
-    notification_preferences: str
-    session_refresh: str
+    session: str
 
 
 class ClientFeatures(BaseModel):
@@ -42,3 +43,13 @@ class AuthSessionResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     session: SessionBootstrap
+
+
+class SessionUpdate(BaseModel):
+    """Optional push token (from Firebase in app code) and notification toggles."""
+
+    fcm_token: Optional[str] = None
+    notify_email: Optional[bool] = None
+    notify_sms: Optional[bool] = None
+    notify_push: Optional[bool] = None
+    phone_number: Optional[str] = None

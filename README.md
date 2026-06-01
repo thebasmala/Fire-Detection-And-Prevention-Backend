@@ -1,62 +1,38 @@
 # Fire Detection and Prevention Backend
 
-FastAPI backend for fire detection: MQTT ingest (Pi), PostgreSQL, real-time WebSocket alerts, Cloudinary frames, and automated notifications (email, SMS/MMS, FCM).
+FastAPI backend: MQTT ingest (Pi), PostgreSQL, WebSocket alerts, Cloudinary frames, email/SMS/FCM notifications.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-# Configure .env — see guides/SETUP.md
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# Copy .env — see guides/SETUP.md
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-- **API docs:** `http://localhost:8000/docs`
-- **Health:** `http://localhost:8000/health`
-- **Client integration (Flutter + web):** [guides/CLIENT_INTEGRATION.md](guides/CLIENT_INTEGRATION.md)
+- Docs: http://localhost:8000/docs  
+- Health: http://localhost:8000/health  
 
-## Automated client access (no manual tokens)
+## Documentation
 
-End users only **log in** (username + password). The server handles everything else:
+| Guide | Audience |
+|-------|----------|
+| [guides/PROJECT_STATUS.md](guides/PROJECT_STATUS.md) | Status + Railway checklist |
+| [guides/CLIENT_INTEGRATION.md](guides/CLIENT_INTEGRATION.md) | Flutter + web teams |
+| [guides/DEPLOYMENT.md](guides/DEPLOYMENT.md) | Railway deploy |
+| [guides/SETUP.md](guides/SETUP.md) | Environment variables |
 
-| What | How |
-|------|-----|
-| **Web dashboard** | `POST /api/auth/login` → HttpOnly cookie → all REST + WebSocket with `credentials: 'include'` (no JWT copy/paste) |
-| **Flutter** | `POST /api/auth/login/json` → store `access_token` + `session` object (URLs, thresholds, prefs) |
-| **FCM push** | App passes `fcm_token` from Firebase SDK in login JSON (or `PUT /api/auth/me/fcm-token` on refresh) — users never type it |
-| **Pi frames** | `SMART_FIRE_FRAME_KEY` in Pi env only (ops), not in the mobile app |
+## Clients (no manual tokens)
 
-Login/register responses include a **`session`** bootstrap: user profile, notification prefs, realtime thresholds, and full endpoint URLs.
+- **Login:** `POST /api/auth/login` → `access_token` + `session` (URLs, prefs, thresholds).
+- **Web:** HttpOnly cookie — use `credentials: 'include'`.
+- **Flutter:** JSON login; app sends `fcm_token` from Firebase in code (user never types it).
+- **Updates:** `GET/PATCH /api/auth/session` only.
 
-## Features
+## Deploy
 
-- MQTT: sensors, camera/fire events, arm
-- Alerts → WebSocket (all clients) + optional email / SMS-MMS / FCM (high confidence)
-- Cloudinary or local `/static` frame URLs
-- JWT + cookie auth, role-ready user model
-- Pi integration: `pi content/integration/`
+`Procfile` is configured for Railway. See [guides/DEPLOYMENT.md](guides/DEPLOYMENT.md).
 
-## Project layout
+## Pi
 
-```
-app/
-  api/          REST + WebSocket
-  core/         auth, MQTT, storage
-  services/     notifications, FCM, outbound email/SMS
-  models/       SQLModel tables
-guides/         SETUP.md, CLIENT_INTEGRATION.md, FCM_SETUP.md
-pi content/     Raspberry Pi runtime + MQTT helpers
-```
-
-## Environment
-
-See [guides/SETUP.md](guides/SETUP.md) for all variables.
-
-## Hardware
-
-- Sensors, camera, suppression arm via MQTT
-- Raspberry Pi runs detection + uploads frames to this API
-
-## Docs for client teams
-
-- [guides/CLIENT_INTEGRATION.md](guides/CLIENT_INTEGRATION.md) — login, WebSocket, FCM, images, zone
-- [guides/FCM_SETUP.md](guides/FCM_SETUP.md) — Firebase Admin on server + Flutter hooks
+`pi content/integration/` — set `SMART_FIRE_BACKEND_URL` to your API URL (port 8000, not video stream).

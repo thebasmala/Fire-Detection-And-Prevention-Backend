@@ -54,22 +54,9 @@ class NotificationPreferencesUpdate(BaseModel):
     phone_number: Optional[str] = None
 
 
-class FcmTokenUpdate(BaseModel):
-    fcm_token: str
-
-
 class LoginJsonRequest(BaseModel):
-    """Mobile login — optional fcm_token is from Firebase SDK, not user input."""
+    """JSON login — optional fcm_token is supplied by the mobile app from Firebase, not the user."""
 
     username: str
     password: str
     fcm_token: Optional[str] = None
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-
-class TokenData(BaseModel):
-    username: Optional[str] = None

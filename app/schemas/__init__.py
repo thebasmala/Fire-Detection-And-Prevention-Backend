@@ -1,4 +1,4 @@
-from app.schemas.user import UserCreate, UserRead, UserUpdate, Token, TokenData
+from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.schemas.device import DeviceCreate, DeviceRead, DeviceUpdate
 from app.schemas.sensor import SensorCreate, SensorRead, SensorUpdate, SensorReadingCreate, SensorReadingRead
 from app.schemas.alert import AlertCreate, AlertRead, AlertUpdate
@@ -9,8 +9,6 @@ __all__ = [
     "UserCreate",
     "UserRead",
     "UserUpdate",
-    "Token",
-    "TokenData",
     "DeviceCreate",
     "DeviceRead",
     "DeviceUpdate",

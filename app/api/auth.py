@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -15,21 +14,12 @@ from app.core.security import (
 )
 from app.database import get_session
 from app.models.user import User
-from app.schemas.auth_session import AuthSessionResponse, SessionBootstrap
-from app.schemas.user import (
-    FcmTokenUpdate,
-    LoginJsonRequest,
-    NotificationPreferencesRead,
-    NotificationPreferencesUpdate,
-    Token,
-    UserCreate,
-    UserRead,
-)
+from app.schemas.auth_session import AuthSessionResponse, SessionBootstrap, SessionUpdate
+from app.schemas.user import LoginJsonRequest, UserCreate
 from app.services.alert_utils import validate_phone_e164
 from app.services.session_bootstrap import (
     apply_fcm_token,
     build_session_bootstrap,
-    notification_preferences_for,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -46,11 +36,7 @@ def _token_cookie_kwargs() -> dict:
     }
 
 
-def _authenticate_user(
-    session: Session,
-    username: str,
-    password: str,
-) -> User:
+def _authenticate_user(session: Session, username: str, password: str) -> User:
     statement = select(User).where(User.username == username)
     user = session.exec(statement).first()
     if not user or not verify_password(password, user.hashed_password):
@@ -90,10 +76,23 @@ def _issue_auth_session(
 
 
 def _login_response(auth: AuthSessionResponse) -> JSONResponse:
-    """JSON + HttpOnly cookie — web uses cookie for REST and WebSocket without copying JWT."""
     response = JSONResponse(content=auth.model_dump(mode="json"))
     response.set_cookie(value=auth.access_token, **_token_cookie_kwargs())
     return response
+
+
+def _apply_session_update(user: User, body: SessionUpdate) -> None:
+    data = body.model_dump(exclude_unset=True)
+    fcm = data.pop("fcm_token", None)
+    apply_fcm_token(user, fcm)
+    if "phone_number" in data:
+        raw = data["phone_number"]
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            data["phone_number"] = None
+        else:
+            data["phone_number"] = validate_phone_e164(str(raw))
+    for key, value in data.items():
+        setattr(user, key, value)
 
 
 @router.post("/register", response_model=AuthSessionResponse, status_code=status.HTTP_201_CREATED)
@@ -102,7 +101,7 @@ async def register(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    """Create account and sign in immediately (same response as login)."""
+    """Create account and sign in immediately."""
     statement = select(User).where(User.email == user_data.email)
     if session.exec(statement).first():
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -129,119 +128,76 @@ async def register(
 
 
 @router.post("/login", response_model=AuthSessionResponse)
-async def login(
-    request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    session: Session = Depends(get_session),
-):
-    """Form login (Swagger). Sets cookie + returns full session bootstrap."""
-    user = _authenticate_user(session, form_data.username, form_data.password)
-    auth = _issue_auth_session(session, user, request)
-    return _login_response(auth)
-
-
-@router.post("/login/json", response_model=AuthSessionResponse)
-async def login_json(
-    body: LoginJsonRequest,
-    request: Request,
-    session: Session = Depends(get_session),
-):
+async def login(request: Request, session: Session = Depends(get_session)):
     """
-    Flutter/mobile login. Pass optional ``fcm_token`` from Firebase SDK (automatic, not user-typed).
+    Login (web + mobile).
+
+    - **Web / Swagger:** ``application/x-www-form-urlencoded`` with ``username`` and ``password``.
+    - **Flutter:** ``application/json`` with ``username``, ``password``, and optional ``fcm_token``.
+      The FCM token is obtained by your app from Firebase at runtime — end users never type it.
     """
-    user = _authenticate_user(session, body.username, body.password)
-    auth = _issue_auth_session(session, user, request, fcm_token=body.fcm_token)
+    content_type = (request.headers.get("content-type") or "").lower()
+    fcm_token: str | None = None
+
+    if "application/json" in content_type:
+        body = LoginJsonRequest.model_validate(await request.json())
+        username, password = body.username, body.password
+        fcm_token = body.fcm_token
+    else:
+        form = await request.form()
+        username = form.get("username")
+        password = form.get("password")
+        if not username or not password:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="username and password are required",
+            )
+
+    user = _authenticate_user(session, str(username), str(password))
+    auth = _issue_auth_session(session, user, request, fcm_token=fcm_token)
     return _login_response(auth)
 
 
 @router.get("/session", response_model=SessionBootstrap)
-async def get_session_bootstrap(
+async def get_session(
     request: Request,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Refresh URLs/settings after app resume without re-entering credentials."""
+    """Refresh settings and URLs (cookie or Bearer)."""
     user = session.get(User, current_user.id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return build_session_bootstrap(session, user, request)
 
 
+@router.patch("/session", response_model=SessionBootstrap)
+async def update_session(
+    body: SessionUpdate,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Update notification prefs and/or register FCM device token.
+
+    Flutter calls this automatically when Firebase rotates the push token — not user input.
+    """
+    user = session.get(User, current_user.id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        _apply_session_update(user, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    user.updated_at = datetime.utcnow()
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return build_session_bootstrap(session, user, request)
+
+
 @router.post("/logout")
 async def logout(response: Response):
-    """Clear auth cookie (web dashboard). Clients should also discard stored JWT."""
     response.delete_cookie(_COOKIE_NAME, path="/")
     return {"detail": "Logged out"}
-
-
-@router.get("/me", response_model=UserRead)
-async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
-    return current_user
-
-
-@router.get("/me/notification-preferences", response_model=NotificationPreferencesRead)
-async def get_notification_preferences(
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_active_user),
-):
-    user = session.get(User, current_user.id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return notification_preferences_for(user)
-
-
-@router.patch("/me/notification-preferences", response_model=NotificationPreferencesRead)
-async def update_notification_preferences(
-    prefs: NotificationPreferencesUpdate,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_active_user),
-):
-    user = session.get(User, current_user.id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    data = prefs.model_dump(exclude_unset=True)
-    if "phone_number" in data:
-        raw = data["phone_number"]
-        if raw is None or (isinstance(raw, str) and not raw.strip()):
-            data["phone_number"] = None
-        else:
-            try:
-                data["phone_number"] = validate_phone_e164(str(raw))
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    for key, value in data.items():
-        setattr(user, key, value)
-    user.updated_at = datetime.utcnow()
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return notification_preferences_for(user)
-
-
-@router.put("/me/fcm-token", response_model=NotificationPreferencesRead)
-async def register_fcm_token(
-    body: FcmTokenUpdate,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_active_user),
-):
-    """Called automatically when Firebase rotates the device token (not for manual entry)."""
-    user = session.get(User, current_user.id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    apply_fcm_token(user, body.fcm_token)
-    if not user.fcm_token:
-        raise HTTPException(status_code=400, detail="fcm_token cannot be empty")
-    user.updated_at = datetime.utcnow()
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    prefs = notification_preferences_for(user)
-    return NotificationPreferencesRead(
-        notify_email=prefs.notify_email,
-        notify_sms=prefs.notify_sms,
-        notify_push=prefs.notify_push,
-        phone_number=prefs.phone_number,
-        has_fcm_token=True,
-    )

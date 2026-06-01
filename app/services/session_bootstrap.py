@@ -80,8 +80,7 @@ def build_session_bootstrap(
             alerts=f"{api_base}/api/alerts",
             docs=f"{api_base}/docs",
             health=f"{api_base}/health",
-            notification_preferences=f"{api_base}/api/auth/me/notification-preferences",
-            session_refresh=f"{api_base}/api/auth/session",
+            session=f"{api_base}/api/auth/session",
         ),
         features=ClientFeatures(
             email_available=bool(channels.get("sendgrid_configured")),

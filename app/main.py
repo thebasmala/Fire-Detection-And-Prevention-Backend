@@ -14,7 +14,7 @@ from sqlmodel import Session, select, delete
 from app.config import settings
 from app.database import init_db, get_session
 from app.core.mqtt_client import mqtt_client
-from app.api import auth, devices, sensors, alerts, fire_events, video, ai, realtime
+from app.api import auth, devices, sensors, alerts, fire_events, video, realtime
 from app.core.ws_manager import ws_manager
 from app.models.device import Device, DeviceStatus
 from app.models.sensor import Sensor, SensorReading, SensorStatus, SensorType
@@ -496,7 +496,6 @@ app.include_router(sensors.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(fire_events.router, prefix="/api")
 app.include_router(video.router, prefix="/api")
-app.include_router(ai.router, prefix="/api")
 app.include_router(realtime.router, prefix="/api")
 
 

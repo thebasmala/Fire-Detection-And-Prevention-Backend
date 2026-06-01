@@ -66,14 +66,6 @@ class NotificationService:
             confidence=confidence,
         )
 
-    async def acknowledge_alert(
-        self,
-        session: Session,
-        alert_id: int,
-        user_id: int,
-    ) -> Optional[Alert]:
-        return await self.resolve_alert(session, alert_id, user_id)
-
     async def resolve_alert(
         self,
         session: Session,
