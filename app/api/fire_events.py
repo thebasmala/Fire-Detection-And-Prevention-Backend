@@ -59,9 +59,9 @@ async def create_fire_event(
     await notification_service.notify_fire_detected(
         session=session,
         fire_event_id=event.id,
-        location=None,
+        confidence=event.confidence,
     )
-    
+
     return event
 
 

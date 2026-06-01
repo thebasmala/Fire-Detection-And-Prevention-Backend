@@ -1,79 +1,62 @@
 # Fire Detection and Prevention Backend
 
-A FastAPI-based backend system for fire detection and prevention with MQTT integration, AI model support, real-time notifications, and live video streaming.
+FastAPI backend for fire detection: MQTT ingest (Pi), PostgreSQL, real-time WebSocket alerts, Cloudinary frames, and automated notifications (email, SMS/MMS, FCM).
+
+## Quick start
+
+```bash
+pip install -r requirements.txt
+# Configure .env — see guides/SETUP.md
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+- **API docs:** `http://localhost:8000/docs`
+- **Health:** `http://localhost:8000/health`
+- **Client integration (Flutter + web):** [guides/CLIENT_INTEGRATION.md](guides/CLIENT_INTEGRATION.md)
+
+## Automated client access (no manual tokens)
+
+End users only **log in** (username + password). The server handles everything else:
+
+| What | How |
+|------|-----|
+| **Web dashboard** | `POST /api/auth/login` → HttpOnly cookie → all REST + WebSocket with `credentials: 'include'` (no JWT copy/paste) |
+| **Flutter** | `POST /api/auth/login/json` → store `access_token` + `session` object (URLs, thresholds, prefs) |
+| **FCM push** | App passes `fcm_token` from Firebase SDK in login JSON (or `PUT /api/auth/me/fcm-token` on refresh) — users never type it |
+| **Pi frames** | `SMART_FIRE_FRAME_KEY` in Pi env only (ops), not in the mobile app |
+
+Login/register responses include a **`session`** bootstrap: user profile, notification prefs, realtime thresholds, and full endpoint URLs.
 
 ## Features
 
-- Real-time fire detection and monitoring
-- MQTT integration for hardware devices (sensors, camera, arm)
-- AI model integration for risk detection and fire location
-- Live video streaming support
-- Real-time notifications
-- JWT-based authentication
-- RESTful API for management website
-- PostgreSQL database with SQLModel ORM
+- MQTT: sensors, camera/fire events, arm
+- Alerts → WebSocket (all clients) + optional email / SMS-MMS / FCM (high confidence)
+- Cloudinary or local `/static` frame URLs
+- JWT + cookie auth, role-ready user model
+- Pi integration: `pi content/integration/`
 
-## Hardware Components
-
-- **Sensors**: Fire detection sensors connected via MQTT
-- **Camera**: Integrated with Raspberry Pi, streams via MQTT
-- **Arm**: Fire suppression arm controlled via serial connection
-- **Raspberry Pi**: Main hardware controller
-
-## AI Models
-
-1. **High-Risk Device Detection**: Detects devices with high fire risk
-2. **Fire Location Detection**: Locates fire angle and position
-
-## Setup
-
-1. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure environment**:
-   Create a `.env` file in the project root (see `guides/SETUP.md` for all available options)
-
-3. **Set up PostgreSQL database**:
-   ```bash
-   createdb fire_detection_db
-   ```
-
-4. **Start the server**:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-
-## API Documentation
-
-Once the server is running, access:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-## Project Structure
+## Project layout
 
 ```
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI application
-│   ├── config.py            # Configuration settings
-│   ├── database.py          # Database connection
-│   ├── models/              # SQLModel models
-│   ├── schemas/             # Pydantic schemas
-│   ├── api/                 # API routers
-│   ├── core/                # Core functionality
-│   │   ├── security.py      # JWT authentication
-│   │   ├── mqtt_client.py    # MQTT client
-│   │   └── serial_client.py # Serial communication
-│   └── services/            # Business logic
-├── requirements.txt
-├── .env (create this file - see guides/SETUP.md)
-└── README.md
+app/
+  api/          REST + WebSocket
+  core/         auth, MQTT, storage
+  services/     notifications, FCM, outbound email/SMS
+  models/       SQLModel tables
+guides/         SETUP.md, CLIENT_INTEGRATION.md, FCM_SETUP.md
+pi content/     Raspberry Pi runtime + MQTT helpers
 ```
 
-## Environment Variables
+## Environment
 
-See `guides/SETUP.md` for all available configuration options and how to set up your `.env` file.
+See [guides/SETUP.md](guides/SETUP.md) for all variables.
 
+## Hardware
+
+- Sensors, camera, suppression arm via MQTT
+- Raspberry Pi runs detection + uploads frames to this API
+
+## Docs for client teams
+
+- [guides/CLIENT_INTEGRATION.md](guides/CLIENT_INTEGRATION.md) — login, WebSocket, FCM, images, zone
+- [guides/FCM_SETUP.md](guides/FCM_SETUP.md) — Firebase Admin on server + Flutter hooks

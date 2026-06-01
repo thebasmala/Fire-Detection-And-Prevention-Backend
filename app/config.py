@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-here-change-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    # Set true in production (HTTPS) so login cookie is Secure
+    auth_cookie_secure: bool = False
     
     # MQTT
     mqtt_broker_host: str = "localhost"
@@ -19,6 +21,17 @@ class Settings(BaseSettings):
     mqtt_topic_sensors: str = "sensors/#"
     mqtt_topic_camera: str = "camera/#"
     mqtt_topic_arm: str = "arm/#"
+    # WebSocket popup + email/SMS when linked confidence exceeds this (default 80%)
+    high_confidence_threshold: float = 0.8
+    high_confidence_notify_cooldown_seconds: int = 15
+    # SendGrid / Twilio — missing credentials skip silently; recipients from User prefs
+    sendgrid_api_key: Optional[str] = None
+    sendgrid_from_email: Optional[str] = None
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_from_number: Optional[str] = None
+    # Firebase Admin SDK service account JSON path (FCM push)
+    firebase_credentials_path: Optional[str] = None
     fire_event_min_confidence: float = 0.6
     device_event_min_confidence: float = 0.6
     risky_device_cooldown_seconds: int = 120
@@ -39,7 +52,8 @@ class Settings(BaseSettings):
     frames_upload_dir: str = "./uploads/frames"
     # If set, Pi can upload frames with header X-Fire-Frame-Key: <value> (no JWT).
     fire_frame_upload_api_key: Optional[str] = None
-    # Full public base URL for links returned to Pi (e.g. http://192.168.100.4:8000). If unset, request URL is used.
+    # FastAPI public URL for local /static frame links when Cloudinary is off (NOT the MJPEG stream URL).
+    # Example: http://192.168.100.4:8000 — Pi upload uses request URL if unset.
     public_api_base_url: Optional[str] = None
 
     # Cloudinary (optional — if all three are set, frame uploads use Cloudinary)

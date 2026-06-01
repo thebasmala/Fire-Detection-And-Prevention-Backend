@@ -25,7 +25,8 @@ class AlertRead(AlertBase):
     sensor_reading_id: Optional[int] = None
     created_at: datetime
     resolved_at: Optional[datetime] = None
+    frame_url: Optional[str] = None
+    zone: Optional[int] = None
 
     class Config:
         from_attributes = True
-

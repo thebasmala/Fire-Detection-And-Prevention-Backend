@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
-from fastapi import Depends, HTTPException, Header, status
+from fastapi import Cookie, Depends, HTTPException, Header, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel import Session, select
 from app.config import settings
@@ -10,8 +10,25 @@ from app.database import get_session
 from app.models.user import User
 
 # HTTPBearer: Swagger "Authorize" takes the JWT from POST /api/auth/login (OAuth2 Password flow alone does not).
-_bearer_scheme = HTTPBearer(auto_error=True)
+_bearer_scheme = HTTPBearer(auto_error=False)
 _fire_frame_bearer = HTTPBearer(auto_error=False)
+_COOKIE_NAME = "access_token"
+
+
+def extract_access_token(
+    auth: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    access_token: Optional[str] = Cookie(None, alias=_COOKIE_NAME),
+) -> str:
+    """JWT from Authorization header (Flutter) or HttpOnly cookie (web after login)."""
+    if auth and auth.credentials and auth.credentials.strip():
+        return auth.credentials.strip()
+    if access_token and access_token.strip():
+        return access_token.strip()
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated — login first",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -43,16 +60,15 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 async def get_current_user(
-    auth: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    token: str = Depends(extract_access_token),
     session: Session = Depends(get_session),
 ) -> User:
-    """Get current authenticated user from JWT token"""
+    """Get current authenticated user from JWT (Bearer or login cookie)."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    token = auth.credentials
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         username: str = payload.get("sub")

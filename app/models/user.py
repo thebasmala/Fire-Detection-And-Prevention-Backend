@@ -11,6 +11,10 @@ class User(SQLModel, table=True):
     full_name: Optional[str] = None
     is_active: bool = Field(default=True)
     is_superuser: bool = Field(default=False)
+    notify_email: bool = Field(default=True)
+    notify_sms: bool = Field(default=False)
+    notify_push: bool = Field(default=True)
+    phone_number: Optional[str] = None
+    fcm_token: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-

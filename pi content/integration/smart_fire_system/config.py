@@ -288,6 +288,7 @@ MJPEG_JPEG_QUALITY = 85
 # Backend frame uploads — Pi POSTs JPEGs here; must be reachable from the Pi (LAN IP of the PC running FastAPI).
 # Override any time: export SMART_FIRE_BACKEND_URL=http://YOUR_PC_IP:8000
 # Keys must match backend .env FIRE_FRAME_UPLOAD_API_KEY (override Pi side with SMART_FIRE_FRAME_KEY if needed).
+# Must be the FastAPI server (port 8000), NOT the MJPEG video_feed URL.
 _BACKEND_URL_DEFAULT = "http://192.168.100.4:8000"
 BACKEND_BASE_URL = (
     os.environ.get("SMART_FIRE_BACKEND_URL", "").strip().rstrip("/")

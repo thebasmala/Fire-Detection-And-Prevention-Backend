@@ -37,6 +37,7 @@ ENV/
 .env
 .env.local
 .env.*.local
+sendgrid.env
 
 # Database
 *.db
@@ -58,3 +59,7 @@ temp/
 
 #md files
 guides/
+
+
+# firebase fcm token
+smartfire-ee52e-firebase-adminsdk-fbsvc-665c0be410.json

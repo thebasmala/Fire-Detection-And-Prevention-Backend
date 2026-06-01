@@ -9,7 +9,12 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import get_session
 from app.core.security import get_current_active_user, require_fire_frame_upload_auth
-from app.core.storage import FOLDER_DEVICE_FRAMES, FOLDER_FIRE_FRAMES, save_image_bytes
+from app.core.storage import (
+    FOLDER_DEVICE_FRAMES,
+    FOLDER_FIRE_FRAMES,
+    cloudinary_configured,
+    save_image_bytes,
+)
 from app.models.user import User
 from app.models.device import Device
 from app.models.video_stream import VideoStream
@@ -94,6 +99,11 @@ async def upload_fire_frame(
     except Exception as exc:
         logger.exception("Fire frame upload failed")
         raise HTTPException(status_code=500, detail="Failed to store fire frame") from exc
+    logger.info(
+        "Fire frame upload OK (cloudinary=%s): %s",
+        cloudinary_configured(),
+        public_url,
+    )
     return FireFrameUploadResponse(url=public_url, filename=stored_name)
 
 
@@ -122,6 +132,11 @@ async def upload_general_frame(
     except Exception as exc:
         logger.exception("Device frame upload failed")
         raise HTTPException(status_code=500, detail="Failed to store device frame") from exc
+    logger.info(
+        "Device frame upload OK (cloudinary=%s): %s",
+        cloudinary_configured(),
+        public_url,
+    )
     return FireFrameUploadResponse(url=public_url, filename=stored_name)
 
 
