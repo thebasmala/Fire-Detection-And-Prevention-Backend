@@ -129,10 +129,52 @@ def seed_pi_sensors_and_device() -> None:
         session.commit()
 
 
+def _migrate_sensor_live_columns() -> None:
+    """Rename last_value/last_timestamp — PostgreSQL treats last_value as a window function."""
+    try:
+        insp = inspect(engine)
+        if "sensor" not in insp.get_table_names():
+            return
+        existing = {c["name"] for c in insp.get_columns("sensor")}
+    except Exception as exc:
+        logger.warning("Could not inspect sensor table for migrations: %s", exc)
+        return
+
+    renames = (
+        ("last_value", "current_value"),
+        ("last_timestamp", "current_reading_at"),
+    )
+    for old_name, new_name in renames:
+        if old_name in existing and new_name not in existing:
+            stmt = f'ALTER TABLE sensor RENAME COLUMN "{old_name}" TO {new_name}'
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(stmt))
+                logger.info('Renamed sensor column "%s" → "%s"', old_name, new_name)
+                existing.discard(old_name)
+                existing.add(new_name)
+            except Exception as exc:
+                logger.error('Failed to rename sensor column "%s": %s', old_name, exc)
+
+    for col_name, col_type in (
+        ("current_value", "DOUBLE PRECISION"),
+        ("current_reading_at", "TIMESTAMP"),
+    ):
+        if col_name not in existing:
+            stmt = f"ALTER TABLE sensor ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(stmt))
+                logger.info('Added sensor column "%s"', col_name)
+            except Exception as exc:
+                logger.error('Failed to add sensor column "%s": %s', col_name, exc)
+
+
 def init_db():
     """Initialize database tables"""
     SQLModel.metadata.create_all(engine)
     _migrate_user_notification_columns()
+    _migrate_sensor_live_columns()
     _backfill_user_notification_defaults()
     try:
         seed_pi_sensors_and_device()

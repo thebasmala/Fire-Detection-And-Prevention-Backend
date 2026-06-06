@@ -29,9 +29,9 @@ class Sensor(SQLModel, table=True):
     threshold: Optional[float] = None
     unit: Optional[str] = None
     is_active: bool = Field(default=True)
-    # Live status fields for UI
-    last_value: Optional[float] = None
-    last_timestamp: Optional[datetime] = None
+    # Live status fields for UI (avoid PostgreSQL reserved name "last_value")
+    current_value: Optional[float] = None
+    current_reading_at: Optional[datetime] = None
     status: SensorStatus = Field(default=SensorStatus.NORMAL)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

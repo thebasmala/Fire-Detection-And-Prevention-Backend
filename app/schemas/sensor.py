@@ -27,8 +27,8 @@ class SensorUpdate(BaseModel):
 class SensorRead(SensorBase):
     id: int
     device_id: int
-    last_value: Optional[float] = None
-    last_timestamp: Optional[datetime] = None
+    current_value: Optional[float] = None
+    current_reading_at: Optional[datetime] = None
     status: SensorStatus = SensorStatus.NORMAL
     created_at: datetime
     updated_at: datetime

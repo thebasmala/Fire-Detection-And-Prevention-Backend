@@ -127,8 +127,8 @@ def handle_sensor_message(topic: str, payload: dict):
                 return
 
             min_interval = max(1, int(settings.sensor_update_interval_seconds))
-            if sensor.last_timestamp is not None:
-                elapsed = (datetime.utcnow() - sensor.last_timestamp).total_seconds()
+            if sensor.current_reading_at is not None:
+                elapsed = (datetime.utcnow() - sensor.current_reading_at).total_seconds()
                 if elapsed < min_interval:
                     logger.debug(
                         "Skipping sensor %s (%.1fs since last update, min %ss)",
@@ -147,8 +147,8 @@ def handle_sensor_message(topic: str, payload: dict):
             session.commit()
             session.refresh(reading)
 
-            sensor.last_value = value
-            sensor.last_timestamp = datetime.utcnow()
+            sensor.current_value = value
+            sensor.current_reading_at = datetime.utcnow()
 
             if sensor.threshold is not None:
                 if value >= sensor.threshold:
@@ -190,8 +190,8 @@ def handle_sensor_message(topic: str, payload: dict):
                 sensor_name=sensor.name,
                 unit=sensor.unit,
                 timestamp=(
-                    sensor.last_timestamp.isoformat()
-                    if sensor.last_timestamp
+                    sensor.current_reading_at.isoformat()
+                    if sensor.current_reading_at
                     else None
                 ),
             )
