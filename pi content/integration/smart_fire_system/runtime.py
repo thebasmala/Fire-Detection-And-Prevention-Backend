@@ -34,9 +34,11 @@ from smart_fire_system.vision.draw import (
 from smart_fire_system.runtime_direct_mqtt_helper import (
     DeviceEventRuntimePublisher,
     FireEventRuntimePublisher,
+    publish_sensor_reading_via_mosquitto,
     save_fire_frame,
     to_iso_datetime,
 )
+from smart_fire_system.telemetry.sensor_telemetry_manager import SensorTelemetryManager
 
 MQTT_TLS_CAPATH = getattr(_sfs_config, "MQTT_TLS_CAPATH", "/etc/ssl/certs")
 
@@ -251,6 +253,39 @@ def main() -> None:
         infer_frame_stride=DETECTION_FRAME_STRIDE,
     )
     arduino = _build_arduino()
+
+    def _sensor_mqtt_publish(sensor_id: int, payload: dict) -> None:
+        if not MQTT_ENABLED or not SENSOR_MQTT_ENABLED:
+            return
+        topic = f"{MQTT_TOPIC_SENSOR_PREFIX}/{sensor_id}"
+        publish_sensor_reading_via_mosquitto(
+            broker_host=MQTT_BROKER_HOST,
+            broker_port=MQTT_BROKER_PORT,
+            topic=topic,
+            qos=MQTT_QOS,
+            sensor_id=int(sensor_id),
+            device_id=int(payload.get("device_id", SENSOR_DEVICE_ID)),
+            value=float(payload["value"]),
+            unit=str(payload.get("unit") or ""),
+            mqtt_username=str(MQTT_USERNAME or ""),
+            mqtt_password=str(MQTT_PASSWORD or ""),
+            mqtt_use_tls=mqtt_use_tls(),
+            mqtt_tls_capath=str(MQTT_TLS_CAPATH),
+        )
+
+    sensor_telemetry = SensorTelemetryManager(
+        SENSOR_LOG_FILE,
+        port=SENSOR_SERIAL_PORT,
+        baudrate=BAUDRATE,
+        device_id=SENSOR_DEVICE_ID,
+        debug=DEBUG,
+        mqtt_publish=_sensor_mqtt_publish if SENSOR_MQTT_ENABLED else None,
+        mqtt_interval_sec=SENSOR_MQTT_INTERVAL_SEC,
+    )
+    if SENSOR_TELEMETRY_ATTACH_SERIAL:
+        if getattr(arduino, "ser", None) is not None and arduino.ser.is_open:
+            sensor_telemetry.attach(arduino.ser, arduino._ser_lock)
+    sensor_telemetry.start()
     mapper = CalibrationMapper(debug=CALIBRATION_DEBUG, calibration_mode=CALIBRATION_MODE)
     confidence_tracker = ConfidenceFireTracker(
         mapper=mapper,
@@ -384,7 +419,9 @@ def main() -> None:
     print(
         f"[Config] MQTT_ENABLED={MQTT_ENABLED} mode={'cloud' if mqtt_cloud_mode() else 'local'} "
         f"broker={MQTT_BROKER_HOST}:{MQTT_BROKER_PORT} tls={_mqtt_use_tls} topic={MQTT_TOPIC_FIRE} "
-        f"creds={'yes' if mqtt_cloud_mode() else 'NO'} | BACKEND_HTTP=" + BACKEND_BASE_URL.rstrip("/"),
+        f"creds={'yes' if mqtt_cloud_mode() else 'NO'} | BACKEND_HTTP=" + BACKEND_BASE_URL.rstrip("/")
+        + f" | SENSOR_MQTT={SENSOR_MQTT_ENABLED} prefix={MQTT_TOPIC_SENSOR_PREFIX} "
+        f"interval={SENSOR_MQTT_INTERVAL_SEC:.0f}s",
         flush=True,
     )
     if MQTT_ENABLED and MQTT_BROKER_PORT == 8883 and not mqtt_cloud_mode():
@@ -670,6 +707,7 @@ def main() -> None:
         print("\n[System] Shutting down...")
         stop_event.set()
         worker.join(timeout=2.0)
+        sensor_telemetry.stop()
         set_pump(False, force=True)
         arduino.close()
         if mjpeg_server is not None:

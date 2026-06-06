@@ -158,6 +158,61 @@ def publish_fire_event_via_mosquitto(
         return False
 
 
+def publish_sensor_reading_via_mosquitto(
+    *,
+    broker_host: str,
+    broker_port: int,
+    topic: str,
+    qos: int,
+    sensor_id: int,
+    device_id: int,
+    value: float,
+    unit: str = "",
+    mqtt_username: str = "",
+    mqtt_password: str = "",
+    mqtt_use_tls: bool = False,
+    mqtt_tls_capath: str = "/etc/ssl/certs",
+) -> bool:
+    """Publish one sensor reading to sensors/{id} for the FastAPI MQTT handler."""
+    payload: dict[str, Any] = {
+        "sensor_id": int(sensor_id),
+        "device_id": int(device_id),
+        "value": float(value),
+    }
+    if unit:
+        payload["unit"] = str(unit)
+    cmd_list = _mosquitto_pub_cmd(
+        broker_host=broker_host,
+        broker_port=broker_port,
+        topic=topic,
+        qos=qos,
+        message=json.dumps(payload),
+        username=mqtt_username,
+        password=mqtt_password,
+        use_tls=mqtt_use_tls,
+        tls_capath=mqtt_tls_capath,
+    )
+    try:
+        subprocess.run(
+            cmd_list,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_subprocess_env(),
+        )
+        return True
+    except FileNotFoundError:
+        print("[MQTT] mosquitto_pub not found — sudo apt install mosquitto-clients", flush=True)
+        return False
+    except subprocess.CalledProcessError as exc:
+        err = (exc.stderr or exc.stdout or "").strip()
+        print(f"[MQTT] publish SENSOR {sensor_id} failed: {err}", flush=True)
+        return False
+    except Exception as exc:
+        print(f"[MQTT] publish SENSOR {sensor_id} error: {exc}", flush=True)
+        return False
+
+
 def publish_device_event_via_mosquitto(
     *,
     broker_host: str,

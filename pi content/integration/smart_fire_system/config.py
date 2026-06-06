@@ -27,9 +27,25 @@ DEBUG = True
 FIRE_MODEL_PATH = "/home/pi/smart_fire_system/models/fire_smoke/fire.hef"
 CONFIDENCE_THRESHOLD = MIN_THRESHOLD = 0.60
 LOG_FILE = "/home/pi/smart_fire_system/detections_output.jsonl"
+SENSOR_LOG_FILE = "/home/pi/smart_fire_system/logs/sensors/sensor_logs.jsonl"
 FIRE_FRAMES_DIR = "/home/pi/smart_fire_system/fire_frames"
 SERIAL_PORT = "/dev/ttyUSB0"
 BAUDRATE = 9600
+# Sensor telemetry shares the Arduino serial port when True (read-only analytics).
+SENSOR_TELEMETRY_ATTACH_SERIAL = True
+SENSOR_SERIAL_PORT = SERIAL_PORT
+SENSOR_DEVICE_ID = 1
+# Publish sensor readings to MQTT for backend (sensors/{id}); one update per sensor per interval.
+SENSOR_MQTT_ENABLED = os.environ.get("SENSOR_MQTT_ENABLED", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+SENSOR_MQTT_INTERVAL_SEC = float(os.environ.get("SENSOR_MQTT_INTERVAL_SEC", "60"))
+MQTT_TOPIC_SENSOR_PREFIX = (
+    os.environ.get("MQTT_TOPIC_SENSOR_PREFIX", "sensors").strip() or "sensors"
+)
 
 ARDUINO_DUAL_SERVO_PAN_TILT = False
 PUMP_USES_LASER_LINES = False
@@ -226,6 +242,7 @@ BIAS_LEARN_RATE = 0.02
 BIAS_MAX_DEG = 2.0
 
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(SENSOR_LOG_FILE), exist_ok=True)
 os.makedirs(FIRE_FRAMES_DIR, exist_ok=True)
 
 
@@ -288,7 +305,6 @@ MJPEG_JPEG_QUALITY = 85
 # Backend frame uploads — Pi POSTs JPEGs here; must be reachable from the Pi (LAN IP of the PC running FastAPI).
 # Override any time: export SMART_FIRE_BACKEND_URL=http://YOUR_PC_IP:8000
 # Keys must match backend .env FIRE_FRAME_UPLOAD_API_KEY (override Pi side with SMART_FIRE_FRAME_KEY if needed).
-# Must be the FastAPI server (port 8000), NOT the MJPEG video_feed URL.
 _BACKEND_URL_DEFAULT = "http://192.168.100.4:8000"
 BACKEND_BASE_URL = (
     os.environ.get("SMART_FIRE_BACKEND_URL", "").strip().rstrip("/")

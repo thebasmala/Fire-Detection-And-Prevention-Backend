@@ -41,6 +41,20 @@ async def get_sensors(
     return sensors
 
 
+@router.get("/live", response_model=List[SensorRead])
+async def get_sensors_live(
+    device_id: int = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Latest value/status for all active sensors (Flutter dashboard bootstrap)."""
+    statement = select(Sensor).where(Sensor.is_active == True)
+    if device_id is not None:
+        statement = statement.where(Sensor.device_id == device_id)
+    statement = statement.order_by(Sensor.id)
+    return list(session.exec(statement).all())
+
+
 @router.get("/{sensor_id}", response_model=SensorRead)
 async def get_sensor(
     sensor_id: int,

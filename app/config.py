@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     
     # Data retention
     sensor_data_retention_days: int = 30
+    # Min seconds between persisted sensor updates per sensor (MQTT + WebSocket)
+    sensor_update_interval_seconds: int = 60
     
     # Server
     host: str = "0.0.0.0"

@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -12,7 +13,7 @@ from app.core.security import (
     get_password_hash,
     verify_password,
 )
-from app.database import get_session
+from app.database import get_session as get_db_session
 from app.models.user import User
 from app.schemas.auth_session import AuthSessionResponse, SessionBootstrap, SessionUpdate
 from app.schemas.user import LoginJsonRequest, UserCreate
@@ -95,13 +96,22 @@ def _apply_session_update(user: User, body: SessionUpdate) -> None:
         setattr(user, key, value)
 
 
-@router.post("/register", response_model=AuthSessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=AuthSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register",
+    responses={
+        201: {"description": "Account created; returns JWT + session bootstrap"},
+        400: {"description": "Email or username already taken"},
+    },
+)
 async def register(
     user_data: UserCreate,
     request: Request,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_db_session),
 ):
-    """Create account and sign in immediately."""
+    """Create account and sign in immediately (sets HttpOnly cookie + returns Bearer token)."""
     statement = select(User).where(User.email == user_data.email)
     if session.exec(statement).first():
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -127,61 +137,78 @@ async def register(
     return _login_response(auth)
 
 
-@router.post("/login", response_model=AuthSessionResponse)
-async def login(request: Request, session: Session = Depends(get_session)):
+@router.post(
+    "/login",
+    response_model=AuthSessionResponse,
+    summary="Login (form)",
+)
+async def login(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    session: Session = Depends(get_db_session),
+):
     """
-    Login (web + mobile).
+    **Swagger / web:** use the form fields below (`username` + `password`).
 
-    - **Web / Swagger:** ``application/x-www-form-urlencoded`` with ``username`` and ``password``.
-    - **Flutter:** ``application/json`` with ``username``, ``password``, and optional ``fcm_token``.
-      The FCM token is obtained by your app from Firebase at runtime — end users never type it.
+    Copy `access_token` from the response into **Authorize** (Bearer) for protected routes.
     """
-    content_type = (request.headers.get("content-type") or "").lower()
-    fcm_token: str | None = None
-
-    if "application/json" in content_type:
-        body = LoginJsonRequest.model_validate(await request.json())
-        username, password = body.username, body.password
-        fcm_token = body.fcm_token
-    else:
-        form = await request.form()
-        username = form.get("username")
-        password = form.get("password")
-        if not username or not password:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="username and password are required",
-            )
-
-    user = _authenticate_user(session, str(username), str(password))
-    auth = _issue_auth_session(session, user, request, fcm_token=fcm_token)
+    user = _authenticate_user(session, form_data.username, form_data.password)
+    auth = _issue_auth_session(session, user, request)
     return _login_response(auth)
 
 
-@router.get("/session", response_model=SessionBootstrap)
-async def get_session(
+@router.post(
+    "/login/json",
+    response_model=AuthSessionResponse,
+    summary="Login (JSON)",
+)
+async def login_json(
+    body: LoginJsonRequest,
     request: Request,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_db_session),
+):
+    """
+    **Flutter / mobile:** JSON body with optional `fcm_token` from Firebase (not user-typed).
+
+    Same response as form login — Bearer token + session bootstrap + HttpOnly cookie.
+    """
+    user = _authenticate_user(session, body.username, body.password)
+    auth = _issue_auth_session(session, user, request, fcm_token=body.fcm_token)
+    return _login_response(auth)
+
+
+@router.get(
+    "/session",
+    response_model=SessionBootstrap,
+    summary="Get session",
+)
+async def read_session(
+    request: Request,
+    session: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Refresh settings and URLs (cookie or Bearer)."""
+    """Refresh settings and URLs (Bearer header or login cookie)."""
     user = session.get(User, current_user.id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return build_session_bootstrap(session, user, request)
 
 
-@router.patch("/session", response_model=SessionBootstrap)
+@router.patch(
+    "/session",
+    response_model=SessionBootstrap,
+    summary="Update session",
+)
 async def update_session(
     body: SessionUpdate,
     request: Request,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     Update notification prefs and/or register FCM device token.
 
-    Flutter calls this automatically when Firebase rotates the push token — not user input.
+    Flutter calls this when Firebase rotates the push token — not end-user input.
     """
     user = session.get(User, current_user.id)
     if not user:
@@ -197,7 +224,8 @@ async def update_session(
     return build_session_bootstrap(session, user, request)
 
 
-@router.post("/logout")
+@router.post("/logout", summary="Logout")
 async def logout(response: Response):
+    """Clear the HttpOnly auth cookie (Bearer tokens are client-managed until expiry)."""
     response.delete_cookie(_COOKIE_NAME, path="/")
     return {"detail": "Logged out"}

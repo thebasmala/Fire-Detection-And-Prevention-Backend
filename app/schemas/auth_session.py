@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.user import NotificationPreferencesRead, UserRead
 
@@ -48,8 +48,25 @@ class AuthSessionResponse(BaseModel):
 class SessionUpdate(BaseModel):
     """Optional push token (from Firebase in app code) and notification toggles."""
 
-    fcm_token: Optional[str] = None
+    fcm_token: Optional[str] = Field(
+        default=None,
+        description="FCM device token from Firebase SDK",
+    )
     notify_email: Optional[bool] = None
     notify_sms: Optional[bool] = None
     notify_push: Optional[bool] = None
-    phone_number: Optional[str] = None
+    phone_number: Optional[str] = Field(
+        default=None,
+        description="E.164 format, e.g. +201234567890",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "notify_email": True,
+                "notify_push": True,
+                "notify_sms": False,
+                "phone_number": "+201234567890",
+            }
+        }
+    )

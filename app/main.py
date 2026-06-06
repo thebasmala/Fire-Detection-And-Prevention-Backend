@@ -73,84 +73,129 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete")
 
 
+def _normalize_sensor_payload(payload: dict) -> dict:
+    """Accept flat JSON or Pi log shape {\"data\": {...}}."""
+    if not isinstance(payload, dict):
+        return {}
+    inner = payload.get("data")
+    if isinstance(inner, dict):
+        merged = dict(payload)
+        merged.update(inner)
+        return merged
+    return payload
+
+
+def _extract_sensor_value(payload: dict):
+    """Backend expects `value`; tolerate common aliases from manual tests."""
+    value = payload.get("value")
+    if value is None and "temperature" in payload:
+        value = payload.get("temperature")
+    if value is None and "humidity" in payload:
+        value = payload.get("humidity")
+    return value
+
+
 def handle_sensor_message(topic: str, payload: dict):
     """Handle incoming sensor messages from MQTT"""
     try:
         from app.database import engine
+        payload = _normalize_sensor_payload(payload)
         with Session(engine) as session:
-            # Parse sensor data from MQTT payload
             # Expected format: {"sensor_id": int, "value": float, "device_id": int}
             sensor_id = payload.get("sensor_id")
-            value = payload.get("value")
+            value = _extract_sensor_value(payload)
             device_id = payload.get("device_id")
-            
-            if sensor_id and value is not None:
-                # Create sensor reading (for history/audit)
-                reading = SensorReading(
-                    sensor_id=sensor_id,
-                    value=value,
-                    timestamp=datetime.utcnow()
+
+            if sensor_id is None or value is None:
+                logger.warning(
+                    "Ignored sensor MQTT on %s — need sensor_id and value (got keys %s)",
+                    topic,
+                    list(payload.keys()),
                 )
-                session.add(reading)
-                session.commit()
-                session.refresh(reading)
-                
-                # Get sensor to update live status and check threshold
-                sensor = session.get(Sensor, sensor_id)
-                if sensor:
-                    sensor.last_value = value
-                    sensor.last_timestamp = datetime.utcnow()
-                    
-                    # Derive sensor status based on threshold if available
-                    if sensor.threshold is not None:
-                        if value >= sensor.threshold:
-                            sensor.status = SensorStatus.CRITICAL
-                        elif value >= 0.8 * sensor.threshold:
-                            sensor.status = SensorStatus.WARNING
-                        else:
-                            sensor.status = SensorStatus.NORMAL
-                    else:
-                        sensor.status = SensorStatus.NORMAL
-                    
-                    # Threshold exceeded — alert + MQTT via notification service
-                    if sensor.threshold is not None and value >= sensor.threshold:
-                        is_temp = sensor.sensor_type == SensorType.TEMPERATURE
-                        notification_service.create_alert_sync(
-                            session,
-                            AlertType.HIGH_TEMP if is_temp else AlertType.GAS_DETECTED,
-                            sensor_reading_id=reading.id,
-                        )
-                    
-                    session.add(sensor)
-                
-                # Update device last_seen
-                if device_id:
-                    device = session.get(Device, device_id)
-                    if device:
-                        device.status = DeviceStatus.ONLINE
-                        device.last_seen = datetime.utcnow()
-                        session.add(device)
-                
-                session.commit()
-                if sensor:
-                    realtime_dispatcher.dispatch_sensor_reading(
-                        sensor_id=sensor_id,
-                        value=float(value),
-                        status=str(
-                            sensor.status.value
-                            if hasattr(sensor.status, "value")
-                            else sensor.status
-                        ),
-                        device_id=device_id,
-                        sensor_name=sensor.name,
-                        unit=sensor.unit,
-                        timestamp=(
-                            sensor.last_timestamp.isoformat()
-                            if sensor.last_timestamp
-                            else None
-                        ),
+                return
+
+            try:
+                sensor_id = int(sensor_id)
+                value = float(value)
+            except (TypeError, ValueError):
+                logger.warning("Invalid sensor_id/value on %s: %r / %r", topic, sensor_id, value)
+                return
+
+            sensor = session.get(Sensor, sensor_id)
+            if sensor is None:
+                logger.warning("Unknown sensor_id=%s on %s — run seed or create sensor row", sensor_id, topic)
+                return
+
+            min_interval = max(1, int(settings.sensor_update_interval_seconds))
+            if sensor.last_timestamp is not None:
+                elapsed = (datetime.utcnow() - sensor.last_timestamp).total_seconds()
+                if elapsed < min_interval:
+                    logger.debug(
+                        "Skipping sensor %s (%.1fs since last update, min %ss)",
+                        sensor_id,
+                        elapsed,
+                        min_interval,
                     )
-                logger.debug(f"Processed sensor reading: sensor_id={sensor_id}, value={value}")
+                    return
+
+            reading = SensorReading(
+                sensor_id=sensor_id,
+                value=value,
+                timestamp=datetime.utcnow(),
+            )
+            session.add(reading)
+            session.commit()
+            session.refresh(reading)
+
+            sensor.last_value = value
+            sensor.last_timestamp = datetime.utcnow()
+
+            if sensor.threshold is not None:
+                if value >= sensor.threshold:
+                    sensor.status = SensorStatus.CRITICAL
+                elif value >= 0.8 * sensor.threshold:
+                    sensor.status = SensorStatus.WARNING
+                else:
+                    sensor.status = SensorStatus.NORMAL
+            else:
+                sensor.status = SensorStatus.NORMAL
+
+            if sensor.threshold is not None and value >= sensor.threshold:
+                is_temp = sensor.sensor_type == SensorType.TEMPERATURE
+                notification_service.create_alert_sync(
+                    session,
+                    AlertType.HIGH_TEMP if is_temp else AlertType.GAS_DETECTED,
+                    sensor_reading_id=reading.id,
+                )
+
+            session.add(sensor)
+
+            if device_id:
+                device = session.get(Device, int(device_id))
+                if device:
+                    device.status = DeviceStatus.ONLINE
+                    device.last_seen = datetime.utcnow()
+                    session.add(device)
+
+            session.commit()
+            realtime_dispatcher.dispatch_sensor_reading(
+                sensor_id=sensor_id,
+                value=float(value),
+                status=str(
+                    sensor.status.value
+                    if hasattr(sensor.status, "value")
+                    else sensor.status
+                ),
+                device_id=int(device_id) if device_id is not None else sensor.device_id,
+                sensor_name=sensor.name,
+                unit=sensor.unit,
+                timestamp=(
+                    sensor.last_timestamp.isoformat()
+                    if sensor.last_timestamp
+                    else None
+                ),
+            )
+            logger.debug("Processed sensor reading: sensor_id=%s value=%s", sensor_id, value)
     except Exception as e:
         logger.error(f"Error handling sensor message: {e}")
 
@@ -449,9 +494,13 @@ async def cleanup_old_sensor_readings_task():
 # Create FastAPI application
 app = FastAPI(
     title="Fire Detection and Prevention API",
-    description="Backend API for fire detection and prevention system with MQTT integration",
+    description=(
+        "Backend API for fire detection and prevention system with MQTT integration.\n\n"
+        "**Auth in Swagger:** `POST /api/auth/login` (form) or `/api/auth/login/json`, "
+        "copy `access_token` from the response, click **Authorize**, paste as Bearer token."
+    ),
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS middleware

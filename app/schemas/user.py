@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional
 from datetime import datetime
 
@@ -11,7 +11,19 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(min_length=6, examples=["secret123"])
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "email": "admin@example.com",
+                "username": "admin",
+                "full_name": "Admin User",
+                "password": "secret123",
+                "is_active": True,
+            }
+        }
+    )
 
 
 class UserUpdate(BaseModel):
@@ -57,6 +69,19 @@ class NotificationPreferencesUpdate(BaseModel):
 class LoginJsonRequest(BaseModel):
     """JSON login — optional fcm_token is supplied by the mobile app from Firebase, not the user."""
 
-    username: str
-    password: str
-    fcm_token: Optional[str] = None
+    username: str = Field(examples=["admin"])
+    password: str = Field(examples=["secret123"])
+    fcm_token: Optional[str] = Field(
+        default=None,
+        description="FCM device token from Firebase SDK (mobile only)",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "username": "admin",
+                "password": "secret123",
+                "fcm_token": None,
+            }
+        }
+    )

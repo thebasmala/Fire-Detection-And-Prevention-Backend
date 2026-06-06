@@ -55,25 +55,7 @@ python -m smart_fire_system.app
 | **q** | Quit normally (pump off, serial cleanup, camera stop). |
 | **e** | Emergency stop: pump off, `RESET` to Arduino, then exit. |
 
-### 5. MQTT (HiveMQ Cloud vs local Mosquitto)
-
-The Pi **publishes** detection events; the FastAPI backend **subscribes** to the **same broker**.
-
-| Mode | `MQTT_BROKER_HOST` | Port | User / pass | TLS |
-|------|-------------------|------|-------------|-----|
-| **HiveMQ Cloud** (current default in `config.py`) | `*.hivemq.cloud` | `8883` | set both | yes |
-| **Local Mosquitto on Pi** | `127.0.0.1` | `1883` | empty | no |
-
-On the Pi:
-
-1. Copy `smart_fire_system/mqtt.env.example` → `smart_fire_system/mqtt.env` and set `SMART_FIRE_MQTT_PASS` (same password as HiveMQ console / PC `.env`).
-2. Or export before run: `export SMART_FIRE_MQTT_PASS='your-password'`
-3. Install clients: `sudo apt install mosquitto-clients`
-4. Restart runtime; look for `[MQTT] OK published` and `[Config] mode=cloud`.
-
-Requires network from Pi to the internet for HiveMQ (not only LAN).
-
-### 6. Configuration (`smart_fire_system/config.py`)
+### 5. Configuration (`smart_fire_system/config.py`)
 
 Important knobs:
 
