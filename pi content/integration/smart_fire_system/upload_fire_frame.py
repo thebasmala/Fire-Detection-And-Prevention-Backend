@@ -14,6 +14,7 @@ Then publish MQTT with frame_url set to the printed URL (backend stores it in vi
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -29,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--file", required=True, help="Path to image file on Pi")
     p.add_argument(
         "--backend",
-        default="http://192.168.100.4:8000",
+        default=os.environ.get("SMART_FIRE_BACKEND_URL", "https://api.smartfiresystem.me").rstrip("/"),
         help="Backend base URL (no trailing slash)",
     )
     p.add_argument(

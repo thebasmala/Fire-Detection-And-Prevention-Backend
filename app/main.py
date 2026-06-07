@@ -8,8 +8,10 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select, delete
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.config import settings
 from app.database import init_db, get_session
@@ -34,6 +36,29 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def _build_cors_origins() -> list[str]:
+    """Production CORS — always include PUBLIC_API_BASE_URL so Swagger + dashboard work."""
+    if settings.debug:
+        return ["*"]
+
+    origins: set[str] = set()
+    if settings.cors_origins:
+        for origin in settings.cors_origins.split(","):
+            origin = origin.strip().rstrip("/")
+            if origin:
+                origins.add(origin)
+
+    if settings.public_api_base_url:
+        base = settings.public_api_base_url.strip().rstrip("/")
+        if base:
+            origins.add(base)
+            # If API is on api.example.com, also allow apex example.com for web dashboard
+            if "://api." in base:
+                origins.add(base.replace("://api.", "://", 1))
+
+    return sorted(origins)
 
 
 @asynccontextmanager
@@ -503,19 +528,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Railway / reverse proxy: trust X-Forwarded-Proto so Swagger uses https, not http
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
 # CORS middleware
-if settings.debug:
-    cors_origins = ["*"]
-else:
-    cors_origins = [
-        origin.strip()
-        for origin in (settings.cors_origins or "").split(",")
-        if origin.strip()
-    ]
-    if not cors_origins:
-        logger.warning(
-            "Production mode with empty CORS_ORIGINS: browser clients may be blocked by CORS."
-        )
+cors_origins = _build_cors_origins()
+if not settings.debug and not cors_origins:
+    logger.warning(
+        "Production CORS is empty — set CORS_ORIGINS and/or PUBLIC_API_BASE_URL on Railway."
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -524,6 +545,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def custom_openapi():
+    """Pin OpenAPI server URL so Swagger Try-it-out uses https://api... not http://."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    if settings.public_api_base_url:
+        schema["servers"] = [
+            {"url": settings.public_api_base_url.strip().rstrip("/"), "description": "Production"}
+        ]
+    else:
+        schema["servers"] = [{"url": "/", "description": "Current host"}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 os.makedirs(settings.fire_frames_upload_dir, exist_ok=True)
 app.mount(

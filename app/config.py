@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # If set, Pi can upload frames with header X-Fire-Frame-Key: <value> (no JWT).
     fire_frame_upload_api_key: Optional[str] = None
     # FastAPI public URL for local /static frame links when Cloudinary is off (NOT the MJPEG stream URL).
-    # Example: http://192.168.100.4:8000 — Pi upload uses request URL if unset.
+    # Public API URL for session bootstrap links (set on Railway to https://api.smartfiresystem.me)
     public_api_base_url: Optional[str] = None
 
     # Cloudinary (optional — if all three are set, frame uploads use Cloudinary)
