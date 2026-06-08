@@ -128,12 +128,11 @@ On startup the app creates tables, runs light migrations, and seeds **device 1**
 
 ## Production (Railway)
 
-Deploy from this repo with:
+Deploy from this repo. **Recommended:** use the included **`Dockerfile`** (Railway auto-detects it) — installs Python 3.12.8 from Docker Hub and avoids Railpack/mise downloading from GitHub (common `504 Gateway Timeout` failure).
 
-- **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`  
-  (also defined in `Procfile`)
+If you use **Railpack** instead, Python is pinned to **3.12.8** via `.python-version`, `runtime.txt`, and `railpack.json`. Set `RAILPACK_PYTHON_VERSION=3.12.8` if the build still picks another version.
+
 - **PostgreSQL** plugin linked → `DATABASE_URL`
-- **Python 3.12** via `.python-version`
 
 Important environment variables:
 

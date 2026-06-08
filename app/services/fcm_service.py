@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -14,8 +15,29 @@ _firebase_initialized = False
 
 
 def fcm_configured() -> bool:
+    """True when the server can call Firebase Admin (required for push while app is closed)."""
+    raw = (settings.firebase_credentials_json or "").strip()
+    if raw:
+        try:
+            json.loads(raw)
+            return True
+        except json.JSONDecodeError:
+            logger.warning("FIREBASE_CREDENTIALS_JSON is set but is not valid JSON")
+            return False
     path = (settings.firebase_credentials_path or "").strip()
     return bool(path and Path(path).is_file())
+
+
+def _load_certificate():
+    from firebase_admin import credentials
+
+    raw = (settings.firebase_credentials_json or "").strip()
+    if raw:
+        return credentials.Certificate(json.loads(raw))
+    path = (settings.firebase_credentials_path or "").strip()
+    if path and Path(path).is_file():
+        return credentials.Certificate(path)
+    return None
 
 
 def _ensure_firebase() -> bool:
@@ -26,10 +48,11 @@ def _ensure_firebase() -> bool:
         return False
     try:
         import firebase_admin
-        from firebase_admin import credentials
 
         if not firebase_admin._apps:
-            cred = credentials.Certificate(settings.firebase_credentials_path.strip())
+            cred = _load_certificate()
+            if cred is None:
+                return False
             firebase_admin.initialize_app(cred)
         _firebase_initialized = True
         return True
@@ -49,6 +72,10 @@ def send_push(
     if not fcm_token or not fcm_token.strip():
         return False
     if not _ensure_firebase():
+        logger.warning(
+            "FCM push skipped — configure FIREBASE_CREDENTIALS_PATH (local) or "
+            "FIREBASE_CREDENTIALS_JSON (Railway) on the API server"
+        )
         return False
     try:
         from firebase_admin import messaging

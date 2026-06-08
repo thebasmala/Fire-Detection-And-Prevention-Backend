@@ -191,9 +191,13 @@ async def notify_high_confidence_users(*, alert_id: int, confidence: float) -> N
                         media_url=ctx.frame_url,
                     ):
                         sent = True
-                if user.notify_push and user.fcm_token and fcm_configured():
-                    zone_str = str(ctx.zone) if ctx.zone is not None else ""
-                    if send_push(
+                if user.notify_push and user.fcm_token:
+                    if not fcm_configured():
+                        logger.warning(
+                            "User %s has FCM token but Firebase is not configured on this server",
+                            user.id,
+                        )
+                    elif send_push(
                         fcm_token=user.fcm_token,
                         title=ctx.title,
                         body=ctx.plain_body.split("\n")[0],
@@ -201,7 +205,7 @@ async def notify_high_confidence_users(*, alert_id: int, confidence: float) -> N
                         data={
                             "alert_id": ctx.alert_id,
                             "alert_type": ctx.alert_type,
-                            "zone": zone_str,
+                            "zone": str(ctx.zone) if ctx.zone is not None else "",
                             "confidence_percent": ctx.confidence_percent or "",
                             "event": "alert_created",
                         },

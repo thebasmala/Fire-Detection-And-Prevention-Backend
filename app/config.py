@@ -30,8 +30,10 @@ class Settings(BaseSettings):
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_from_number: Optional[str] = None
-    # Firebase Admin SDK service account JSON path (FCM push)
+    # Firebase Admin SDK — FCM push when app is closed (need ONE of these on the server)
     firebase_credentials_path: Optional[str] = None
+    # Railway/serverless: paste full service-account JSON (no file on disk)
+    firebase_credentials_json: Optional[str] = None
     fire_event_min_confidence: float = 0.6
     device_event_min_confidence: float = 0.6
     risky_device_cooldown_seconds: int = 120
